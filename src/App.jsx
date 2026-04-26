@@ -13,6 +13,11 @@ import {
   MoreHorizontal,
   GitBranch,
   Link as LinkIcon,
+  Plus,
+  ArrowUp,
+  Globe,
+  BookOpen,
+  Info,
 } from "lucide-react";
 
 function Home() {
@@ -91,26 +96,58 @@ function Onboarding() {
       </div>
 
       {/* URL Input Area */}
-      <div className="w-full max-w-[640px] pb-8 flex-shrink-0 mx-auto">
-        <div className="relative flex items-center bg-card border border-border rounded-lg focus-within:border-foreground/30 transition-colors shadow-sm overflow-hidden h-14">
-          <div className="pl-4 pr-3 text-muted-foreground flex items-center justify-center">
-            <LinkIcon className="w-5 h-5" />
-          </div>
+      <div className="w-full max-w-[680px] pb-8 flex-shrink-0 mx-auto">
+        <div className="relative flex items-center bg-card border border-border rounded-full h-14 px-2">
+          <Button
+            variant="ghost"
+            size="icon"
+            className="rounded-full flex-shrink-0 text-muted-foreground hover:text-foreground"
+          >
+            <Plus className="w-5 h-5" />
+          </Button>
           <input
             type="text"
             value={url}
             onChange={(e) => setUrl(e.target.value)}
             placeholder="https://github.com/user/repo"
-            className="flex-1 bg-transparent border-none outline-none text-foreground placeholder:text-muted-foreground text-base h-full w-full"
+            className="flex-1 bg-transparent border-none outline-none text-foreground placeholder:text-muted-foreground text-base h-full px-3"
             onKeyDown={(e) => {
               if (e.key === "Enter") handleIndex();
             }}
           />
-          <div className="pr-2 flex items-center h-full">
-            <Button variant="default" onClick={handleIndex}>
-              Index
+          <div className="flex items-center gap-1 flex-shrink-0 pr-1">
+            <Button
+              variant="ghost"
+              size="icon"
+              className="rounded-full text-muted-foreground hover:text-foreground"
+            >
+              <LinkIcon className="w-5 h-5" />
+            </Button>
+            <Button
+              variant="default"
+              size="icon"
+              className="rounded-full"
+              onClick={handleIndex}
+            >
+              <ArrowUp className="w-4 h-4" />
             </Button>
           </div>
+        </div>
+
+        {/* Suggestion Chips */}
+        <div className="flex flex-wrap items-center justify-center gap-2 mt-4">
+          <button className="flex items-center gap-2 rounded-full border border-border bg-transparent hover:bg-accent text-muted-foreground text-xs px-3 py-1.5 transition-colors">
+            <Globe className="w-4 h-4" />
+            <span>Try a public repo</span>
+          </button>
+          <button className="flex items-center gap-2 rounded-full border border-border bg-transparent hover:bg-accent text-muted-foreground text-xs px-3 py-1.5 transition-colors">
+            <BookOpen className="w-4 h-4" />
+            <span>Browse examples</span>
+          </button>
+          <button className="flex items-center gap-2 rounded-full border border-border bg-transparent hover:bg-accent text-muted-foreground text-xs px-3 py-1.5 transition-colors">
+            <Info className="w-4 h-4" />
+            <span>Learn more</span>
+          </button>
         </div>
 
         {/* Progress Log */}
