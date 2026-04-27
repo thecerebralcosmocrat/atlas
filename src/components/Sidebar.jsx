@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Map, GitBranch, Folder, ChevronDown } from "lucide-react";
+import { GitBranch, Folder, ChevronDown, Settings, User } from "lucide-react";
 import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useNavigate, useLocation } from "react-router-dom";
@@ -15,8 +15,9 @@ export default function Sidebar() {
     <aside className="w-[260px] bg-card flex flex-col border border-border h-[calc(100vh-24px)] m-3 rounded-xl flex-shrink-0 overflow-hidden">
       {/* Sidebar header */}
       <div className="flex items-center gap-3 px-6 py-5 text-foreground">
-        <Map className="w-5 h-5" />
-        <span className="font-semibold text-lg tracking-tight">Atlas</span>
+        <span className="font-product font-semibold text-2xl tracking-tight">
+          Atlas
+        </span>
       </div>
 
       {/* Navigation links */}
@@ -93,6 +94,27 @@ export default function Sidebar() {
           </div>
         </div>
       </ScrollArea>
+
+      {/* Sidebar Footer */}
+      <div className="mt-auto border-t border-border p-3 space-y-1">
+        <div className="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-accent text-muted-foreground hover:text-foreground cursor-pointer transition-colors">
+          <Settings className="w-4 h-4" />
+          <span className="text-sm font-medium">Settings</span>
+        </div>
+        <div className="flex items-center gap-3 px-2 py-2 rounded-lg hover:bg-accent text-muted-foreground hover:text-foreground cursor-pointer transition-colors">
+          <div className="w-7 h-7 rounded-full bg-primary/20 flex items-center justify-center flex-shrink-0">
+            <User className="w-4 h-4 text-primary" />
+          </div>
+          <div className="flex flex-col overflow-hidden">
+            <span className="text-sm font-medium text-foreground truncate">
+              Atlas User
+            </span>
+            <span className="text-[10px] text-muted-foreground truncate">
+              Free Plan
+            </span>
+          </div>
+        </div>
+      </div>
     </aside>
   );
 }

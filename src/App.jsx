@@ -84,10 +84,7 @@ function Onboarding() {
     <div className="flex-1 flex flex-col items-center justify-between p-6 overflow-y-auto">
       {/* Centered Empty State */}
       <div className="flex-1 flex flex-col items-center justify-center w-full">
-        <div className="w-16 h-16 rounded-full bg-accent/40 flex items-center justify-center mb-6">
-          <GitBranch className="w-8 h-8 text-muted-foreground" />
-        </div>
-        <h2 className="text-3xl font-bold text-foreground mb-2 tracking-tight">
+        <h2 className="text-3xl font-aleo font-bold text-foreground mb-2 tracking-tight">
           Index a repository
         </h2>
         <p className="text-muted-foreground mb-8">
@@ -177,35 +174,41 @@ function Layout({ children }) {
 
   // Topbar title shows active repo name, falls back to "Atlas"
   const title = location.pathname === "/" ? "Atlas" : "project-atlas";
+  const showTopbar = location.pathname !== "/";
 
   return (
-    <div className="flex h-screen w-screen overflow-hidden bg-background text-foreground font-sans antialiased selection:bg-accent selection:text-foreground">
-      <Sidebar />
-      <main className="flex-1 flex flex-col bg-background h-full overflow-hidden">
-        {/* Topbar */}
-        <header className="flex items-center justify-between px-6 py-4 border-b border-border flex-shrink-0 bg-background">
-          <h1 className="text-sm font-medium text-foreground">{title}</h1>
-          <div className="flex items-center gap-2">
-            <Button
-              variant="ghost"
-              size="icon"
-              className="text-muted-foreground hover:text-foreground"
-            >
-              <Settings className="w-5 h-5" />
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="text-muted-foreground hover:text-foreground"
-            >
-              <MoreHorizontal className="w-5 h-5" />
-            </Button>
-          </div>
-        </header>
+    <div className="flex flex-col h-screen w-screen overflow-hidden bg-background text-foreground font-sans antialiased selection:bg-accent selection:text-foreground">
+      {/* Custom Titlebar */}
+      <div
+        className="h-8 w-full bg-background flex items-center justify-between px-4 flex-shrink-0 z-50 select-none"
+        style={{ WebkitAppRegion: "drag" }}
+      >
+        <div className="flex items-center gap-2"></div>
+      </div>
 
-        {/* Page Content */}
-        {children}
-      </main>
+      <div className="flex flex-1 overflow-hidden">
+        <Sidebar />
+        <main className="flex-1 flex flex-col bg-background h-full overflow-hidden">
+          {/* Topbar */}
+          {showTopbar && (
+            <header className="flex items-center justify-between px-6 py-4 border-b border-border flex-shrink-0 bg-background">
+              <h1 className="text-sm font-medium text-foreground">{title}</h1>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="text-muted-foreground hover:text-foreground"
+                >
+                  <MoreHorizontal className="w-5 h-5" />
+                </Button>
+              </div>
+            </header>
+          )}
+
+          {/* Page Content */}
+          {children}
+        </main>
+      </div>
     </div>
   );
 }
