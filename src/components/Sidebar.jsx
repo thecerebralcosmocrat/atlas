@@ -12,7 +12,7 @@ export default function Sidebar() {
   const isActive = (path) => location.pathname === path;
 
   return (
-    <aside className="w-[260px] bg-card flex flex-col border border-border h-[calc(100vh-24px)] m-3 rounded-xl flex-shrink-0 overflow-hidden">
+    <aside className="w-[260px] bg-card flex flex-col border-r border-border h-full flex-shrink-0 overflow-hidden">
       {/* Sidebar header */}
       <div className="flex items-center gap-3 px-6 py-5 text-foreground">
         <span className="font-product font-semibold text-2xl tracking-tight">
