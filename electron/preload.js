@@ -1,8 +1,13 @@
 const { contextBridge, ipcRenderer } = require("electron");
 
 contextBridge.exposeInMainWorld("electronAPI", {
-  // IPC bridge — filled in as we build each feature
-  send: (channel, data) => ipcRenderer.send(channel, data),
-  on: (channel, cb) => ipcRenderer.on(channel, (_, ...args) => cb(...args)),
-  invoke: (channel, data) => ipcRenderer.invoke(channel, data),
+  repositories: {
+    list: () => ipcRenderer.invoke("repositories:list"),
+    add: (repositoryUrl) =>
+      ipcRenderer.invoke("repositories:add", repositoryUrl),
+    inspect: (repositoryId) =>
+      ipcRenderer.invoke("repositories:inspect", repositoryId),
+    ask: (repositoryId, question) =>
+      ipcRenderer.invoke("repositories:ask", { repositoryId, question }),
+  },
 });
