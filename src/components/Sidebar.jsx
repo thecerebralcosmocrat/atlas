@@ -56,7 +56,7 @@ export default function Sidebar({
     selectedRepositoryId === repository.id && location.pathname !== "/";
 
   return (
-    <aside className="m-2 flex h-[calc(100vh-16px)] w-[260px] flex-shrink-0 flex-col overflow-hidden rounded-[calc(var(--radius)+0.75rem)] border border-sidebar-border bg-sidebar shadow-sm">
+    <aside className="m-2 flex h-[calc(100vh-16px)] w-[260px] flex-shrink-0 flex-col overflow-hidden rounded-[calc(10px-2px)] border border-sidebar-border bg-sidebar shadow-sm">
       {/* Sidebar header */}
       <div className="flex items-center gap-3 px-6 py-5 text-sidebar-foreground">
         <span className="font-product text-2xl font-semibold tracking-tight">

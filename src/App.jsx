@@ -209,7 +209,7 @@ function Home({
 
   return (
     <div className="flex-1 overflow-y-auto p-6">
-      <div className="max-w-4xl">
+      <div className="mx-auto max-w-4xl">
         <p className="text-xs font-medium uppercase tracking-widest text-muted-foreground">
           Current repository
         </p>
@@ -252,7 +252,10 @@ function Home({
                   {repository.localPath}
                 </p>
               </div>
-              <Button className="rounded-full" onClick={() => navigate("/explorer")}>
+              <Button
+                className="rounded-full"
+                onClick={() => navigate("/explorer")}
+              >
                 Open explorer
               </Button>
             </div>
@@ -272,7 +275,11 @@ function FileTree({ items, depth = 0 }) {
   if (!items?.length) return null;
 
   return (
-    <div className={depth === 0 ? "flex flex-col gap-1" : "mt-1 flex flex-col gap-1"}>
+    <div
+      className={
+        depth === 0 ? "flex flex-col gap-1" : "mt-1 flex flex-col gap-1"
+      }
+    >
       {items.map((item) => (
         <div key={`${depth}-${item.name}`}>
           <div
@@ -316,7 +323,7 @@ function Explorer({ selectedRepository, selectedDetails, isInspecting }) {
 
   return (
     <div className="flex-1 overflow-y-auto p-6">
-      <div className="max-w-4xl">
+      <div className="mx-auto max-w-4xl">
         <p className="text-xs font-medium uppercase tracking-widest text-muted-foreground">
           Explorer
         </p>
@@ -363,7 +370,10 @@ function Onboarding({ onAddRepository }) {
       navigate("/home");
     } catch (err) {
       setError(err.message || "Could not add this repository.");
-      setLogs((prev) => [...prev, "Indexing failed. Check the URL and try again."]);
+      setLogs((prev) => [
+        ...prev,
+        "Indexing failed. Check the URL and try again.",
+      ]);
     } finally {
       setIsIndexing(false);
     }
@@ -513,7 +523,9 @@ export default function App() {
       setRepositories(storedRepositories);
 
       if (storedRepositories.length > 0) {
-        setSelectedRepositoryId((currentId) => currentId || storedRepositories[0].id);
+        setSelectedRepositoryId(
+          (currentId) => currentId || storedRepositories[0].id,
+        );
       }
     }
 
@@ -545,7 +557,9 @@ export default function App() {
 
   const handleAddRepository = async (repositoryUrl) => {
     if (!repositoryApi) {
-      throw new Error("Repository indexing is only available in the Electron app.");
+      throw new Error(
+        "Repository indexing is only available in the Electron app.",
+      );
     }
 
     const repository = await repositoryApi.add(repositoryUrl);
