@@ -183,6 +183,20 @@
         -moz-osx-font-smoothing: grayscale;
         text-rendering: geometricPrecision;
     }
+    ::-webkit-scrollbar {
+        width: 6px;
+        height: 6px;
+    }
+    ::-webkit-scrollbar-track {
+        background: transparent;
+    }
+    ::-webkit-scrollbar-thumb {
+        background-color: var(--muted-foreground);
+        border-radius: 9999px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+        background-color: var(--foreground);
+    }
     html,
     body,
     #root {

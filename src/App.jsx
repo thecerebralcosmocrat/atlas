@@ -489,21 +489,24 @@ function Layout({
 }) {
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-background font-sans text-foreground antialiased selection:bg-accent selection:text-foreground">
-      {/* Custom Titlebar Drag Region */}
-      <div
-        className="absolute top-0 left-0 w-full h-8 z-50 pointer-events-none"
-        style={{ WebkitAppRegion: "drag" }}
-      />
-
       <Sidebar
         repositories={repositories}
         selectedRepositoryId={selectedRepositoryId}
         onSelectRepository={onSelectRepository}
       />
-      <main className="flex-1 flex flex-col bg-background h-full overflow-hidden relative">
-        {/* Page Content */}
-        {children}
-      </main>
+
+      <div className="flex-1 flex flex-col overflow-hidden">
+        {/* Custom Titlebar Drag Region */}
+        <div
+          className="shrink-0 w-full h-8"
+          style={{ WebkitAppRegion: "drag" }}
+        />
+
+        <main className="flex-1 flex flex-col bg-background overflow-hidden">
+          {/* Page Content */}
+          {children}
+        </main>
+      </div>
     </div>
   );
 }
