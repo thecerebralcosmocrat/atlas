@@ -12,6 +12,7 @@ import {
   Link as LinkIcon,
   Plus,
   ArrowUp,
+  ArrowLeft,
   Globe,
   BookOpen,
   Info,
@@ -324,6 +325,14 @@ function Explorer({ selectedRepository, selectedDetails, isInspecting }) {
   return (
     <div className="flex-1 overflow-y-auto p-6">
       <div className="mx-auto max-w-4xl">
+        <Button
+          variant="ghost"
+          className="mb-4 -ml-3 rounded-full"
+          onClick={() => navigate("/home")}
+        >
+          <ArrowLeft className="mr-1.5 size-4" />
+          Back
+        </Button>
         <p className="text-xs font-medium uppercase tracking-widest text-muted-foreground">
           Explorer
         </p>
