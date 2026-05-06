@@ -90,7 +90,7 @@ export default function Sidebar({
 
       {/* Flat repository list */}
       <ScrollArea className="flex-1 px-3 pb-4">
-        <div className="flex flex-col gap-1">
+        <div className="flex flex-col gap-1 px-0.5">
           {repositories.length === 0 && (
             <div className="px-3 py-2 text-xs leading-relaxed text-muted-foreground">
               Indexed repositories will appear here.
@@ -107,7 +107,7 @@ export default function Sidebar({
                   navigate("/home");
                 }}
                 className={cn(
-                  "flex min-h-12 cursor-pointer items-center rounded-[calc(var(--radius)+0.5rem)] px-3 py-2 transition-[background-color,color,box-shadow] duration-150 ease-out active:bg-sidebar-accent/80",
+                  "flex min-h-12 cursor-pointer items-center rounded-[calc(var(--radius)+0.375rem)] px-3 py-2 transition-[background-color,color,box-shadow] duration-150 ease-out active:bg-sidebar-accent/80",
                   active
                     ? "bg-sidebar-accent text-sidebar-accent-foreground"
                     : "text-muted-foreground hover:bg-sidebar-accent/70 hover:text-sidebar-foreground",
