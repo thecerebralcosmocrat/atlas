@@ -415,6 +415,26 @@ function registerIpcHandlers() {
 
     return answerRepositoryQuestion(answerContext, question.trim());
   });
+
+  ipcMain.handle("index-repo", async (_, { repoPath }) => {
+    // TODO: call IndexerService
+    return { success: true, repoId: 1, fileCount: 0 };
+  });
+
+  ipcMain.handle("get-graph", async (_, { repoId }) => {
+    // TODO: call GraphBuilder
+    return { nodes: [], edges: [] };
+  });
+
+  ipcMain.handle("query-rag", async (_, { question, repoId }) => {
+    // TODO: call RAGPipeline
+    return { answer: "RAG not yet implemented", sources: [] };
+  });
+
+  ipcMain.handle("get-repos", async () => {
+    // TODO: query SQLite repos table
+    return [];
+  });
 }
 
 function createWindow() {
