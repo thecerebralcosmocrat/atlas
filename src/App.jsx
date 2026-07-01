@@ -360,6 +360,7 @@ function Onboarding({ onAddRepository }) {
   const [logs, setLogs] = useState([]);
   const [error, setError] = useState("");
   const logContainerRef = useRef(null);
+  const [progress, setProgress] = useState(null);
 
   const handleIndex = async () => {
     if (!url.trim()) return;
@@ -385,6 +386,7 @@ function Onboarding({ onAddRepository }) {
       ]);
     } finally {
       setIsIndexing(false);
+      setProgress(null);
     }
   };
 
@@ -393,6 +395,18 @@ function Onboarding({ onAddRepository }) {
       logContainerRef.current.scrollTop = logContainerRef.current.scrollHeight;
     }
   }, [logs]);
+
+  useEffect(() => {
+    if (!window.electronAPI?.repositories?.onIndexProgress) return;
+    const unsubscribe = window.electronAPI.repositories.onIndexProgress(
+      (data) => {
+        setProgress(data);
+      }
+    );
+    return () => {
+      unsubscribe();
+    };
+  }, []);
 
   return (
     <div className="flex-1 overflow-y-auto px-6 py-10">
@@ -479,6 +493,28 @@ function Onboarding({ onAddRepository }) {
               ))}
             </div>
           )}
+
+          {progress && (
+            <div className="mt-4 rounded-[calc(var(--radius)+0.5rem)] border border-border bg-card p-4 shadow-sm">
+              <div className="flex justify-between items-center mb-2 text-sm text-muted-foreground">
+                <span className="truncate">
+                  {progress.currentFile.length > 40
+                    ? progress.currentFile.slice(-40)
+                    : progress.currentFile}
+                </span>
+                <span className="font-medium shrink-0 ml-4">
+                  {progress.completed} / {progress.total} files
+                </span>
+              </div>
+              <div className="w-full bg-secondary h-2 rounded-full overflow-hidden">
+                <div
+                  className="bg-primary h-full rounded-full transition-all duration-300 ease-out"
+                  style={{ width: `${(progress.completed / progress.total) * 100}%` }}
+                />
+              </div>
+            </div>
+          )}
+
           {error && (
             <div className="mt-4 rounded-[calc(var(--radius)+0.5rem)] border border-destructive/30 bg-destructive/10 p-4 text-sm text-destructive">
               {error}
