@@ -416,9 +416,11 @@ function registerIpcHandlers() {
     return answerRepositoryQuestion(answerContext, question.trim());
   });
 
-  ipcMain.handle("index-repo", async (_, { repoPath }) => {
-    // TODO: call IndexerService
-    return { success: true, repoId: 1, fileCount: 0 };
+  ipcMain.handle("index-repo", async (event, { repoPath }) => {
+    const { IndexerService } = require("./indexer/IndexerService");
+    const mainWindow = BrowserWindow.fromWebContents(event.sender);
+    const result = await new IndexerService().indexRepo(repoPath, mainWindow);
+    return { success: true, ...result };
   });
 
   ipcMain.handle("get-graph", async (_, { repoId }) => {
