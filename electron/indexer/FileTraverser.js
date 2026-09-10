@@ -41,6 +41,15 @@ const ALLOWED_EXTENSIONS = new Set([
   ".c",
   ".cpp",
   ".h",
+  ".cs",
+  ".rb",
+  ".php",
+  ".swift",
+  ".kt",
+  ".kts",
+  ".scala",
+  ".sh",
+  ".sql",
 ]);
 
 const MAX_FILE_SIZE_BYTES = 500 * 1024;

@@ -2,6 +2,15 @@ const { app, BrowserWindow, ipcMain } = require("electron");
 const fs = require("fs/promises");
 const path = require("path");
 const simpleGit = require("simple-git");
+const { initializeDatabase } = require("./db/schema");
+const {
+  listRepositories,
+  listUnindexedRepositories,
+  findRepository,
+  legacyRepositoriesImported,
+  importLegacyRepositories,
+} = require("./db/repositories");
+const { IndexerService } = require("./indexer/IndexerService");
 
 const isDev = process.env.NODE_ENV === "development";
 const DEFAULT_NIM_API_URL = "https://integrate.api.nvidia.com/v1/chat/completions";
@@ -62,33 +71,68 @@ function getAtlasPaths() {
 }
 
 async function ensureAtlasStorage() {
-  const { atlasRoot, repositoriesRoot, storePath } = getAtlasPaths();
+  const { atlasRoot, repositoriesRoot } = getAtlasPaths();
 
   await fs.mkdir(repositoriesRoot, { recursive: true });
 
-  try {
-    await fs.access(storePath);
-  } catch {
-    await fs.writeFile(storePath, "[]", "utf8");
-  }
-
-  return { atlasRoot, repositoriesRoot, storePath };
+  return { atlasRoot, repositoriesRoot };
 }
 
-async function readRepositories() {
-  const { storePath } = await ensureAtlasStorage();
-  const contents = await fs.readFile(storePath, "utf8");
+async function readLegacyRepositories() {
+  const { storePath } = getAtlasPaths();
 
   try {
-    return JSON.parse(contents);
+    const parsed = JSON.parse(await fs.readFile(storePath, "utf8"));
+    return Array.isArray(parsed) ? parsed : [];
   } catch {
     return [];
   }
 }
 
-async function writeRepositories(repositories) {
-  const { storePath } = await ensureAtlasStorage();
-  await fs.writeFile(storePath, JSON.stringify(repositories, null, 2), "utf8");
+// Moves the pre-SQLite repositories.json store into the database exactly once.
+async function migrateLegacyRepositories() {
+  if (legacyRepositoriesImported()) return;
+
+  try {
+    const legacyRepositories = await readLegacyRepositories();
+
+    if (legacyRepositories.length === 0) return;
+
+    importLegacyRepositories(legacyRepositories);
+  } catch (error) {
+    // A malformed legacy file must never stop the app from starting; the
+    // import transaction rolls back, so the database is left untouched.
+    console.error("Failed to import legacy repositories.json:", error);
+  }
+}
+
+// Indexes repositories that were recorded without an index (legacy imports, or
+// rows written before indexing existed). Runs after the window opens so it
+// never delays startup, and the renderer refreshes once it finishes.
+async function backfillRepositoryIndexes(mainWindow) {
+  for (const repository of listUnindexedRepositories()) {
+    try {
+      await fs.access(repository.localPath);
+    } catch {
+      console.warn(
+        `Skipping index backfill; folder not found: ${repository.localPath}`,
+      );
+      continue;
+    }
+
+    try {
+      await new IndexerService().indexRepo(repository.localPath, mainWindow, {
+        externalId: repository.externalId,
+        name: repository.name,
+        url: repository.url,
+        addedAt: repository.addedAt,
+      });
+    } catch (error) {
+      console.error(`Failed to index ${repository.name}:`, error);
+    }
+  }
+
+  mainWindow?.webContents?.send("repositories:changed");
 }
 
 function getRepositoryName(repositoryUrl) {
@@ -152,7 +196,9 @@ async function inspectRepository(repository) {
 
   return {
     ...repository,
-    fileCount: summary.fileCount,
+    // The database is the source of truth for what was actually indexed; the
+    // filesystem walk only adds the folder count and browsing tree.
+    fileCount: repository.fileCount ?? summary.fileCount,
     directoryCount: summary.directoryCount,
     tree: summary.children,
   };
@@ -336,10 +382,10 @@ function answerRepositoryQuestion({ repository, details, packageInfo, readme }, 
 
 function registerIpcHandlers() {
   ipcMain.handle("repositories:list", async () => {
-    return readRepositories();
+    return listRepositories();
   });
 
-  ipcMain.handle("repositories:add", async (_, repositoryUrl) => {
+  ipcMain.handle("repositories:add", async (event, repositoryUrl) => {
     if (!repositoryUrl || typeof repositoryUrl !== "string") {
       throw new Error("Enter a repository URL.");
     }
@@ -347,28 +393,29 @@ function registerIpcHandlers() {
     const trimmedUrl = repositoryUrl.trim();
     const name = getRepositoryName(trimmedUrl);
     const slug = getRepositorySlug(name);
+    const id = `${slug}-${Date.now()}`;
     const { repositoriesRoot } = await ensureAtlasStorage();
-    const localPath = path.join(repositoriesRoot, `${slug}-${Date.now()}`);
+    const localPath = path.join(repositoriesRoot, id);
+    const addedAt = new Date().toISOString();
 
     await simpleGit().clone(trimmedUrl, localPath, ["--depth", "1"]);
 
-    const repository = {
-      id: `${slug}-${Date.now()}`,
+    // Index before recording the repository so a failed index cannot leave a
+    // repository entry behind with no files. The indexer writes the SQLite row,
+    // so the repository is only visible once it has been indexed.
+    const mainWindow = BrowserWindow.fromWebContents(event.sender);
+    await new IndexerService().indexRepo(localPath, mainWindow, {
+      externalId: id,
       name,
       url: trimmedUrl,
-      localPath,
-      addedAt: new Date().toISOString(),
-    };
-    const repositories = await readRepositories();
+      addedAt,
+    });
 
-    await writeRepositories([repository, ...repositories]);
-
-    return inspectRepository(repository);
+    return inspectRepository(findRepository(id));
   });
 
   ipcMain.handle("repositories:inspect", async (_, repositoryId) => {
-    const repositories = await readRepositories();
-    const repository = repositories.find((item) => item.id === repositoryId);
+    const repository = findRepository(repositoryId);
 
     if (!repository) {
       throw new Error("Repository not found.");
@@ -382,8 +429,7 @@ function registerIpcHandlers() {
       throw new Error("Ask a question about this repository.");
     }
 
-    const repositories = await readRepositories();
-    const repository = repositories.find((item) => item.id === repositoryId);
+    const repository = findRepository(repositoryId);
 
     if (!repository) {
       throw new Error("Repository not found.");
@@ -417,7 +463,6 @@ function registerIpcHandlers() {
   });
 
   ipcMain.handle("index-repo", async (event, { repoPath }) => {
-    const { IndexerService } = require("./indexer/IndexerService");
     const mainWindow = BrowserWindow.fromWebContents(event.sender);
     const result = await new IndexerService().indexRepo(repoPath, mainWindow);
     return { success: true, ...result };
@@ -434,8 +479,7 @@ function registerIpcHandlers() {
   });
 
   ipcMain.handle("get-repos", async () => {
-    // TODO: query SQLite repos table
-    return [];
+    return listRepositories();
   });
 }
 
@@ -465,12 +509,21 @@ function createWindow() {
   } else {
     win.loadFile(path.join(__dirname, "../dist/renderer/index.html"));
   }
+
+  return win;
 }
 
 app.whenReady().then(async () => {
   await loadLocalEnv();
+  const { atlasRoot } = await ensureAtlasStorage();
+  initializeDatabase(path.join(atlasRoot, "atlas.db"));
+  await migrateLegacyRepositories();
   registerIpcHandlers();
-  createWindow();
+  const mainWindow = createWindow();
+  // Fire-and-forget: indexing must not stop the window from appearing.
+  backfillRepositoryIndexes(mainWindow).catch((error) =>
+    console.error("Repository index backfill failed:", error),
+  );
 });
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();

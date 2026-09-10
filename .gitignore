@@ -4,3 +4,6 @@ dist/
 .env.local
 *.log
 ~/atlas/
+*.db
+*.db-wal
+*.db-shm

@@ -498,9 +498,11 @@ function Onboarding({ onAddRepository }) {
             <div className="mt-4 rounded-[calc(var(--radius)+0.5rem)] border border-border bg-card p-4 shadow-sm">
               <div className="flex justify-between items-center mb-2 text-sm text-muted-foreground">
                 <span className="truncate">
-                  {progress.currentFile.length > 40
-                    ? progress.currentFile.slice(-40)
-                    : progress.currentFile}
+                  {progress.currentFile
+                    ? progress.currentFile.length > 40
+                      ? progress.currentFile.slice(-40)
+                      : progress.currentFile
+                    : "Preparing…"}
                 </span>
                 <span className="font-medium shrink-0 ml-4">
                   {progress.completed} / {progress.total} files
@@ -509,7 +511,13 @@ function Onboarding({ onAddRepository }) {
               <div className="w-full bg-secondary h-2 rounded-full overflow-hidden">
                 <div
                   className="bg-primary h-full rounded-full transition-all duration-300 ease-out"
-                  style={{ width: `${(progress.completed / progress.total) * 100}%` }}
+                  style={{
+                    width: `${
+                      progress.total > 0
+                        ? (progress.completed / progress.total) * 100
+                        : 0
+                    }%`,
+                  }}
                 />
               </div>
             </div>
@@ -561,6 +569,9 @@ export default function App() {
   const [selectedRepositoryId, setSelectedRepositoryId] = useState(null);
   const [selectedDetails, setSelectedDetails] = useState(null);
   const [isInspecting, setIsInspecting] = useState(false);
+  // Bumped when the main process finishes indexing repositories in the
+  // background, which re-runs the list + inspect effects below.
+  const [refreshToken, setRefreshToken] = useState(0);
   const repositoryApi = useMemo(getRepositoryApi, []);
 
   useEffect(() => {
@@ -578,6 +589,14 @@ export default function App() {
     }
 
     loadRepositories();
+  }, [repositoryApi, refreshToken]);
+
+  useEffect(() => {
+    if (!repositoryApi?.onChanged) return undefined;
+
+    return repositoryApi.onChanged(() =>
+      setRefreshToken((currentToken) => currentToken + 1),
+    );
   }, [repositoryApi]);
 
   useEffect(() => {
@@ -597,7 +616,7 @@ export default function App() {
     }
 
     inspectSelectedRepository();
-  }, [repositoryApi, selectedRepositoryId]);
+  }, [repositoryApi, selectedRepositoryId, refreshToken]);
 
   const selectedRepository =
     repositories.find((repository) => repository.id === selectedRepositoryId) ||

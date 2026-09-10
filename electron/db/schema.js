@@ -11,7 +11,14 @@ const SCHEMA_STATEMENTS = [
     name TEXT,
     root_path TEXT UNIQUE,
     indexed_at INTEGER,
-    file_count INTEGER
+    file_count INTEGER,
+    url TEXT,
+    added_at TEXT,
+    external_id TEXT
+  )`,
+  `CREATE TABLE IF NOT EXISTS meta (
+    key TEXT PRIMARY KEY,
+    value TEXT
   )`,
   `CREATE TABLE IF NOT EXISTS files (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -47,6 +54,31 @@ const SCHEMA_STATEMENTS = [
   `CREATE INDEX IF NOT EXISTS idx_symbols_file_id ON symbols(file_id)`,
 ];
 
+// Columns added after the original schema shipped. `CREATE TABLE IF NOT EXISTS`
+// cannot add columns to an existing database, so legacy databases are migrated
+// by inspecting the current table and adding whatever is missing.
+const REPOSITORY_COLUMNS = [
+  ["url", "TEXT"],
+  ["added_at", "TEXT"],
+  ["external_id", "TEXT"],
+];
+
+function ensureRepositoryColumns(database) {
+  const existingColumns = new Set(
+    database.prepare("PRAGMA table_info(repos)").all().map((row) => row.name),
+  );
+
+  for (const [name, type] of REPOSITORY_COLUMNS) {
+    if (!existingColumns.has(name)) {
+      database.exec(`ALTER TABLE repos ADD COLUMN ${name} ${type}`);
+    }
+  }
+
+  database.exec(
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_repos_external_id ON repos(external_id)",
+  );
+}
+
 function getDefaultDbPath() {
   const { app } = require("electron");
   return path.join(app.getPath("userData"), "atlas-data", "atlas.db");
@@ -70,6 +102,8 @@ function initializeDatabase(resolvedDbPath) {
   for (const statement of SCHEMA_STATEMENTS) {
     db.exec(statement);
   }
+
+  ensureRepositoryColumns(db);
 
   dbPath = resolvedDbPath;
   return db;
