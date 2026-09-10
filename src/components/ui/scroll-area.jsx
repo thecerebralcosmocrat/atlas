@@ -14,7 +14,15 @@ function ScrollArea({
     <ScrollAreaPrimitive.Root data-slot="scroll-area" className={cn("relative", className)} {...props}>
       <ScrollAreaPrimitive.Viewport
         data-slot="scroll-area-viewport"
-        className="size-full rounded-[inherit] transition-[color,box-shadow] outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-1">
+        // Radix wraps children in a `display: table` div (inline style). A table
+        // shrink-wraps but never goes below its min-content width, so one child
+        // with a long unbreakable run (e.g. a nowrap path/repo name) widens the
+        // wrapper past the viewport; the overflow-hidden viewport then clips
+        // full-width rows flat on the right and kills text truncation.
+        // `block!` (Tailwind v4 important suffix) forces the wrapper to a normal
+        // block that fills the viewport width, so `w-full` rows stay inside the
+        // content box and `truncate` still ellipsizes.
+        className="size-full rounded-[inherit] transition-[color,box-shadow] outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-1 [&>div]:block!">
         {children}
       </ScrollAreaPrimitive.Viewport>
       <ScrollBar />
