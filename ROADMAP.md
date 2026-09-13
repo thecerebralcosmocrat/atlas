@@ -16,6 +16,24 @@ answers questions about the code.
   `IndexerService` accepts an injected window.
 - **RAG is deferred** until the symbol graph is stable, because retrieval that
   ignores structure duplicates what the graph already answers cheaply.
+- **Every phase ships a working product.** Phase 1 ends with an app that can
+  onboard a repository and answer questions about it, Phase 2 with structural
+  and semantic answers, Phase 3 with a generated explanation of where to start.
+  A phase is only finished when all of its increments are in and the app runs.
+
+## Phases at a glance
+
+| Phase | Product at the end | Increments | State |
+|---|---|---|---|
+| 1 — Make the app functional | Add a repo, watch it index, browse files, ask grounded questions | I0–I6 | done |
+| 2 — Code graph + RAG | Explore how files, symbols, and imports connect; retrieve answers by meaning, not keywords | I7–I8 | I7 done, I8 deferred |
+| 3 — Onboarding intelligence | A generated "start here" path plus impact and ownership answers for an unfamiliar codebase | I9–I11 | planned |
+
+Phase 2 was never written down as its own section — the original draft deferred
+"code graph + RAG" as Phase 3 while the chat-grounding work (I5) and add/index
+robustness (I6) landed inside Phase 1. This restructure closes that numbering
+gap: the graph and RAG work becomes Phase 2, and the next product becomes
+Phase 3.
 
 ## Phase 1 — Make the app functional
 
@@ -28,6 +46,12 @@ answers questions about the code.
 | I4 | Serve repo list from SQLite (+ migrate JSON) | done (`abd8f98`) |
 | I5 | Ground chat answers in indexed files | done |
 | I6 | Robustness (URL validation, orphan cleanup, timeouts) | done |
+
+I5 and I6 stay in Phase 1 rather than moving to Phase 2. Phase 1's product is an
+app that ends in a trustworthy answer: I5 is what makes chat cite real indexed
+files instead of guessing, and I6 is what keeps a failed clone or index from
+leaving a repository row pointing at nothing. Phase 2 starts from that
+trustworthy index and adds structure (I7) and retrieval by meaning (I8).
 
 ### I5 — Ground chat answers in indexed files
 
@@ -67,7 +91,7 @@ gets an explicit "not been indexed yet" answer instead of a guess.
   Windows). `npm test` now targets `test/*.test.js` explicitly so helper files
   under `test/` are not executed as tests.
 
-## Phase 3 — Code graph + RAG
+## Phase 2 — Code graph + RAG
 
 | # | Increment | State |
 |---|---|---|
@@ -110,6 +134,39 @@ the file/symbol/import graph and the Explorer renders it.
 `query-rag` is still a stub. Planned: chunk files, embed chunks, store vectors
 (LanceDB is declared in `package.json` but not installed), and answer by
 retrieving chunks instead of the lexical ranking in `query/search.js`.
+
+## Phase 3 — Onboarding intelligence (planned)
+
+Phase 3 turns the index and graph from something you query into something that
+explains the codebase for you. Each increment is an answer a new hire would
+otherwise have to assemble by hand, and none of them need a new dependency.
+
+| # | Increment | State |
+|---|---|---|
+| I9 | Entry points + a guided "start here" path | planned |
+| I10 | Impact analysis from the import graph | planned |
+| I11 | Ownership and recency from git history | planned |
+
+### I9 — Entry points + "start here"
+
+Detect where execution begins (`package.json` `main`/`bin`, index files, Python
+`__main__`) and rank the modules worth reading first using the I7 import graph —
+high fan-in files that are not tests. Rendered in the Explorer as an ordered
+reading path, so onboarding starts from a route rather than a bare file tree.
+
+### I10 — Impact analysis
+
+Answer the reverse of I7's edges: "what imports this file?", "where is this
+symbol used?", and the transitive blast radius of changing it — plus modules the
+graph cannot reach from any entry point. Served through the same graph query
+layer and surfaced in the Explorer and chat.
+
+### I11 — Ownership and recency
+
+Read `git log`/`blame` through `simple-git` (already a dependency) to annotate
+the graph with how recently each file changed and who has touched it most —
+churn hotspots and likely reviewers per file, so "who should I ask?" has an
+answer grounded in the clone the app already has.
 
 ## Testing
 
