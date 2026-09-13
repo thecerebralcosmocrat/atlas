@@ -11,6 +11,7 @@ const {
   importLegacyRepositories,
 } = require("./db/repositories");
 const { IndexerService } = require("./indexer/IndexerService");
+const { searchRepositoryFiles } = require("./query/search");
 
 const isDev = process.env.NODE_ENV === "development";
 const DEFAULT_NIM_API_URL = "https://integrate.api.nvidia.com/v1/chat/completions";
@@ -258,12 +259,52 @@ function firstReadmeParagraph(readme) {
     ?.slice(0, 700);
 }
 
-function buildRepositoryContext({ repository, details, packageInfo, readme }) {
+const NOT_INDEXED_NOTE =
+  "This repository has not been indexed yet, so I can only see its README, package.json, and file tree. Re-add it to index its source files.";
+
+function formatExcerpt(excerpt) {
+  return `\`${excerpt.path}\` (lines ${excerpt.startLine}-${excerpt.endLine}):\n\`\`\`\n${excerpt.content}\n\`\`\``;
+}
+
+function buildSourceList(excerpts) {
+  return excerpts
+    .map(
+      (excerpt) =>
+        `\`${excerpt.path}\` (lines ${excerpt.startLine}-${excerpt.endLine})`,
+    )
+    .join(", ");
+}
+
+function buildCodeSection(excerpts) {
+  if (excerpts.length === 0) return "";
+
+  return `\n\nRelevant indexed code:\n\n${excerpts
+    .slice(0, 2)
+    .map(formatExcerpt)
+    .join("\n\n")}`;
+}
+
+function buildRepositoryContext({
+  repository,
+  details,
+  packageInfo,
+  readme,
+  excerpts = [],
+}) {
   const topDirectories = getTopLevelNames(details.tree, "directory");
   const topFiles = getTopLevelNames(details.tree, "file");
   const scripts = Object.entries(packageInfo?.scripts || {});
   const dependencies = packageInfo?.dependencies || [];
   const devDependencies = packageInfo?.devDependencies || [];
+  const excerptSection =
+    excerpts.length > 0
+      ? `\n\nRelevant code excerpts retrieved from the index:\n${excerpts
+          .map(
+            (excerpt) =>
+              `${excerpt.path} (lines ${excerpt.startLine}-${excerpt.endLine}):\n${excerpt.content}`,
+          )
+          .join("\n\n")}`
+      : "";
 
   return [
     `Repository: ${repository.name}`,
@@ -284,7 +325,7 @@ function buildRepositoryContext({ repository, details, packageInfo, readme }) {
       devDependencies.slice(0, 30).join(", ") || "none found"
     }`,
     `README excerpt:\n${readme.slice(0, 5000) || "No README found."}`,
-  ].join("\n");
+  ].join("\n") + excerptSection;
 }
 
 async function answerWithNim(repositoryContext, question) {
@@ -310,7 +351,7 @@ async function answerWithNim(repositoryContext, question) {
         {
           role: "system",
           content:
-            "You are Atlas, a senior codebase onboarding assistant. Answer using only the repository context provided. Be concise, practical, and specific. When useful, suggest exact files, folders, or package scripts to inspect. If the context is insufficient, say what is missing instead of guessing.",
+            "You are Atlas, a senior codebase onboarding assistant. Answer using only the repository context provided, including the retrieved code excerpts. Be concise, practical, and specific. Cite the exact file paths you relied on. When useful, suggest files, folders, or package scripts to inspect. If the context is insufficient, say what is missing instead of guessing.",
         },
         {
           role: "user",
@@ -329,7 +370,10 @@ async function answerWithNim(repositoryContext, question) {
   return payload.choices?.[0]?.message?.content?.trim() || null;
 }
 
-function answerRepositoryQuestion({ repository, details, packageInfo, readme }, question) {
+function answerRepositoryQuestion(
+  { repository, details, packageInfo, readme, excerpts = [] },
+  question,
+) {
   const normalizedQuestion = question.toLowerCase();
   const topDirectories = getTopLevelNames(details.tree, "directory");
   const topFiles = getTopLevelNames(details.tree, "file");
@@ -339,15 +383,21 @@ function answerRepositoryQuestion({ repository, details, packageInfo, readme }, 
   const intro =
     firstReadmeParagraph(readme) ||
     `${repository.name} contains ${details.fileCount} files across ${details.directoryCount} folders.`;
+  // The retrieved files are named in every answer so the user can verify it,
+  // and quoted in full when the question is about specific code.
+  const sources =
+    excerpts.length > 0
+      ? `\n\nMost relevant indexed files: ${buildSourceList(excerpts)}.`
+      : "";
 
   if (normalizedQuestion.includes("run") || normalizedQuestion.includes("start")) {
     if (scripts.length === 0) {
-      return `I could not find npm scripts in this repository. Start by opening the top-level files (${topFiles.join(", ") || "none found"}) and checking the README for setup instructions.`;
+      return `I could not find npm scripts in this repository. Start by opening the top-level files (${topFiles.join(", ") || "none found"}) and checking the README for setup instructions.${sources}`;
     }
 
     return `To run this codebase, use the scripts in \`package.json\`:\n\n${scripts
       .map(([name, command]) => `- \`npm run ${name}\`: \`${command}\``)
-      .join("\n")}\n\nFor onboarding, start with \`README.md\`, then inspect ${topDirectories.slice(0, 4).map((name) => `\`${name}\``).join(", ") || "the top-level folders"}.`;
+      .join("\n")}\n\nFor onboarding, start with \`README.md\`, then inspect ${topDirectories.slice(0, 4).map((name) => `\`${name}\``).join(", ") || "the top-level folders"}.${sources}`;
   }
 
   if (
@@ -355,7 +405,7 @@ function answerRepositoryQuestion({ repository, details, packageInfo, readme }, 
     normalizedQuestion.includes("where") ||
     normalizedQuestion.includes("start")
   ) {
-    return `I would start here:\n\n- \`README.md\` for project intent and setup.\n- \`package.json\` for scripts and dependencies.\n- Top-level folders: ${topDirectories.map((name) => `\`${name}\``).join(", ") || "none found"}.\n- Top-level files: ${topFiles.map((name) => `\`${name}\``).join(", ") || "none found"}.\n\nThis repo currently indexes as ${details.fileCount} files in ${details.directoryCount} folders.`;
+    return `I would start here:\n\n- \`README.md\` for project intent and setup.\n- \`package.json\` for scripts and dependencies.\n- Top-level folders: ${topDirectories.map((name) => `\`${name}\``).join(", ") || "none found"}.\n- Top-level files: ${topFiles.map((name) => `\`${name}\``).join(", ") || "none found"}.\n\nThis repo currently indexes as ${details.fileCount} files in ${details.directoryCount} folders.${sources}`;
   }
 
   if (
@@ -366,7 +416,7 @@ function answerRepositoryQuestion({ repository, details, packageInfo, readme }, 
     const primaryDependencies = dependencies.slice(0, 12);
     const primaryDevDependencies = devDependencies.slice(0, 8);
 
-    return `The visible stack from \`package.json\` is:\n\n- Dependencies: ${primaryDependencies.map((name) => `\`${name}\``).join(", ") || "none listed"}.\n- Dev dependencies: ${primaryDevDependencies.map((name) => `\`${name}\``).join(", ") || "none listed"}.\n\nThe main scripts are ${scripts.map(([name]) => `\`${name}\``).join(", ") || "not listed"}.`;
+    return `The visible stack from \`package.json\` is:\n\n- Dependencies: ${primaryDependencies.map((name) => `\`${name}\``).join(", ") || "none listed"}.\n- Dev dependencies: ${primaryDevDependencies.map((name) => `\`${name}\``).join(", ") || "none listed"}.\n\nThe main scripts are ${scripts.map(([name]) => `\`${name}\``).join(", ") || "not listed"}.${sources}`;
   }
 
   if (
@@ -374,7 +424,14 @@ function answerRepositoryQuestion({ repository, details, packageInfo, readme }, 
     normalizedQuestion.includes("overview") ||
     normalizedQuestion.includes("explain")
   ) {
-    return `${intro}\n\nQuick structure:\n\n- ${details.fileCount} files\n- ${details.directoryCount} folders\n- Top folders: ${topDirectories.map((name) => `\`${name}\``).join(", ") || "none found"}\n- Top files: ${topFiles.map((name) => `\`${name}\``).join(", ") || "none found"}`;
+    return `${intro}\n\nQuick structure:\n\n- ${details.fileCount} files\n- ${details.directoryCount} folders\n- Top folders: ${topDirectories.map((name) => `\`${name}\``).join(", ") || "none found"}\n- Top files: ${topFiles.map((name) => `\`${name}\``).join(", ") || "none found"}${sources}${buildCodeSection(excerpts)}`;
+  }
+
+  if (excerpts.length > 0) {
+    return `Here is the most relevant code I found in the index:\n\n${excerpts
+      .slice(0, 2)
+      .map(formatExcerpt)
+      .join("\n\n")}${sources}`;
   }
 
   return `Here is what I can tell from the indexed repository:\n\n${intro}\n\nUseful entry points are ${topFiles.map((name) => `\`${name}\``).join(", ") || "the top-level files"} and ${topDirectories.map((name) => `\`${name}\``).join(", ") || "the top-level folders"}. Ask me things like "How do I run this?", "What should I read first?", or "What stack does this use?"`;
@@ -435,23 +492,37 @@ function registerIpcHandlers() {
       throw new Error("Repository not found.");
     }
 
+    const trimmedQuestion = question.trim();
     const details = await inspectRepository(repository);
     const [packageJsonText, readme] = await Promise.all([
       readOptionalText(path.join(repository.localPath, "package.json")),
       readRepositoryReadme(repository.localPath),
     ]);
+    // Pull the most relevant indexed source files so answers are grounded in
+    // the code itself, not just the README and file tree.
+    const excerpts = searchRepositoryFiles(repository.id, trimmedQuestion);
 
     const answerContext = {
       repository,
       details,
       packageInfo: summarizePackageJson(packageJsonText),
       readme,
+      excerpts,
     };
+
+    // Nothing was indexed, so there is no code to ground an answer in. Say so
+    // rather than letting the model guess from the README alone.
+    if (repository.fileCount === 0) {
+      return `${NOT_INDEXED_NOTE}\n\n${answerRepositoryQuestion(
+        answerContext,
+        trimmedQuestion,
+      )}`;
+    }
 
     try {
       const nimAnswer = await answerWithNim(
         buildRepositoryContext(answerContext),
-        question.trim(),
+        trimmedQuestion,
       );
 
       if (nimAnswer) return nimAnswer;
@@ -459,7 +530,7 @@ function registerIpcHandlers() {
       console.error(error);
     }
 
-    return answerRepositoryQuestion(answerContext, question.trim());
+    return answerRepositoryQuestion(answerContext, trimmedQuestion);
   });
 
   ipcMain.handle("index-repo", async (event, { repoPath }) => {

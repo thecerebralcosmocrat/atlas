@@ -69,12 +69,19 @@ async function loadMain({ userData }) {
   return { handlers, sentEvents };
 }
 
-function makeGitFixtureRepo() {
+function makeGitFixtureRepo(files = null) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "atlas-gitfixture-"));
+  const entries = files ?? {
+    "index.js": "const a = 1;\n",
+    "src/app.py": "print('hi')\n",
+  };
 
-  fs.writeFileSync(path.join(root, "index.js"), "const a = 1;\n");
-  fs.mkdirSync(path.join(root, "src"));
-  fs.writeFileSync(path.join(root, "src", "app.py"), "print('hi')\n");
+  for (const [relativePath, contents] of Object.entries(entries)) {
+    const target = path.join(root, relativePath);
+
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.writeFileSync(target, contents);
+  }
 
   const git = (args) =>
     execFileSync("git", args, { cwd: root, stdio: "ignore" });
@@ -231,3 +238,57 @@ test("startup backfill indexes a repository that was never indexed", async () =>
     "renderer must be told to refresh once backfill completes",
   );
 });
+
+test("repositories:ask grounds its answer in indexed file content", async () => {
+  const userData = fs.mkdtempSync(path.join(os.tmpdir(), "atlas-userdata-"));
+  // README.md is deliberately not an indexable extension, so any mention of
+  // the source in the answer must come from the indexed file.
+  const repo = makeGitFixtureRepo({
+    "index.js":
+      "function createOrbitIndex(entries) {\n  return entries.map((entry) => entry.path);\n}\n",
+    "README.md": "# Fixture\n\nA tiny repository used to test grounded answers.\n",
+  });
+  const repoUrl = `file:///${repo.replace(/\\/g, "/")}`;
+  const { handlers } = await loadMain({ userData });
+  const previousApiKey = process.env.NVIDIA_NIM_API_KEY;
+
+  // Force the local fallback so the assertion is deterministic and offline.
+  delete process.env.NVIDIA_NIM_API_KEY;
+
+  try {
+    const added = await handlers.get("repositories:add")({ sender: {} }, repoUrl);
+    assert.strictEqual(added.fileCount, 1);
+
+    const answer = await handlers.get("repositories:ask")(
+      { sender: {} },
+      { repositoryId: added.id, question: "createOrbitIndex" },
+    );
+
+    assert.match(answer, /createOrbitIndex/);
+    assert.match(answer, /index\.js/);
+  } finally {
+    if (previousApiKey === undefined) delete process.env.NVIDIA_NIM_API_KEY;
+    else process.env.NVIDIA_NIM_API_KEY = previousApiKey;
+  }
+});
+
+test("repositories:ask says so when a repository has nothing indexed", async () => {
+  const userData = fs.mkdtempSync(path.join(os.tmpdir(), "atlas-userdata-"));
+  const repo = makeGitFixtureRepo({
+    "README.md":
+      "# Docs only\n\nThis repository contains documentation and no source files at all.\n",
+  });
+  const repoUrl = `file:///${repo.replace(/\\/g, "/")}`;
+  const { handlers } = await loadMain({ userData });
+
+  const added = await handlers.get("repositories:add")({ sender: {} }, repoUrl);
+  assert.strictEqual(added.fileCount, 0);
+
+  const answer = await handlers.get("repositories:ask")(
+    { sender: {} },
+    { repositoryId: added.id, question: "what is this about" },
+  );
+
+  assert.match(answer, /not been indexed yet/i);
+});
+
