@@ -132,17 +132,20 @@ function findBalancedParenEnd(text, startIndex) {
 }
 
 // Drops a leading `async` only when it modifies the function that follows.
-// `async (a) => a`, `async(a) => a`, and `async a => a` are all async arrows,
-// but `async => a` is a plain arrow whose parameter happens to be named
-// `async`, and `async;` is just an identifier.
+// `async (a) => a`, `async(a) => a`, `async a => a`, and `async function () {}`
+// are all async functions, but `async => a` is a plain arrow whose parameter
+// happens to be named `async`, and `async;`/`asyncFn()` merely start with the
+// letters.
 function stripAsyncKeyword(text) {
-  const match = /^async(\s*)([\s\S]*)$/.exec(text);
+  if (!/^async(?=\s|\()/.test(text)) return text;
 
-  if (!match) return text;
+  const rest = text.slice("async".length).replace(/^\s+/, "");
 
-  const rest = match[2];
-
-  if (rest.startsWith("(") || /^[A-Za-z_$][\w$]*\s*=>/.test(rest)) {
+  if (
+    rest.startsWith("(") ||
+    /^function\b/.test(rest) ||
+    /^[A-Za-z_$][\w$]*\s*=>/.test(rest)
+  ) {
     return rest;
   }
 

@@ -188,12 +188,14 @@ test("keeps arrow bindings whose parameter list contains nested parens", () => {
   );
 });
 
-test("treats async arrows as functions however async is spaced", () => {
+test("treats async functions as functions however async is spaced", () => {
   const { symbols } = extract("js", [
     "const spaced = async (a) => a;",
     "const tight = async(a) => a;",
     "const bare = async a => a;",
     "const defaults = async(a = foo()) => a;",
+    "const expr = async function () {};",
+    "const gen = async function* () {};",
     // `async` as a parameter name is an ordinary arrow, and as a binding name
     // it is an ordinary variable.
     "const paramNamed = async => async;",
@@ -207,6 +209,8 @@ test("treats async arrows as functions however async is spaced", () => {
       ["tight", "function"],
       ["bare", "function"],
       ["defaults", "function"],
+      ["expr", "function"],
+      ["gen", "function"],
       ["paramNamed", "function"],
       ["async", "variable"],
     ],
