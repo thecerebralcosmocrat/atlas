@@ -131,6 +131,24 @@ function findBalancedParenEnd(text, startIndex) {
   return -1;
 }
 
+// Drops a leading `async` only when it modifies the function that follows.
+// `async (a) => a`, `async(a) => a`, and `async a => a` are all async arrows,
+// but `async => a` is a plain arrow whose parameter happens to be named
+// `async`, and `async;` is just an identifier.
+function stripAsyncKeyword(text) {
+  const match = /^async(\s*)([\s\S]*)$/.exec(text);
+
+  if (!match) return text;
+
+  const rest = match[2];
+
+  if (rest.startsWith("(") || /^[A-Za-z_$][\w$]*\s*=>/.test(rest)) {
+    return rest;
+  }
+
+  return text;
+}
+
 // A `const|let|var` binding is callable when its initializer *is* an arrow or
 // function expression. Testing that with a regex is unreliable — `(a + b) * c`
 // and `(a) && list.some((x) => x)` both contain parens and an arrow — so the
@@ -142,7 +160,7 @@ function matchFunctionBinding(line) {
   if (!prefix) return null;
 
   // `async` binds to the function, not to an identifier: `async (a) => a`.
-  const rest = line.slice(prefix[0].length).replace(/^async\s+/, "");
+  const rest = stripAsyncKeyword(line.slice(prefix[0].length));
 
   if (/^function\b/.test(rest)) return prefix[1];
 

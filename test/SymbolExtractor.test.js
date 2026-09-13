@@ -188,6 +188,31 @@ test("keeps arrow bindings whose parameter list contains nested parens", () => {
   );
 });
 
+test("treats async arrows as functions however async is spaced", () => {
+  const { symbols } = extract("js", [
+    "const spaced = async (a) => a;",
+    "const tight = async(a) => a;",
+    "const bare = async a => a;",
+    "const defaults = async(a = foo()) => a;",
+    // `async` as a parameter name is an ordinary arrow, and as a binding name
+    // it is an ordinary variable.
+    "const paramNamed = async => async;",
+    "const async = 1;",
+  ]);
+
+  assert.deepStrictEqual(
+    symbols.map((symbol) => [symbol.name, symbol.kind]),
+    [
+      ["spaced", "function"],
+      ["tight", "function"],
+      ["bare", "function"],
+      ["defaults", "function"],
+      ["paramNamed", "function"],
+      ["async", "variable"],
+    ],
+  );
+});
+
 test("collects Python plain and from-imports", () => {
   const { imports } = extract("py", [
     "import os, sys as system",
