@@ -14,8 +14,8 @@ answers questions about the code.
 - **Modules stay injectable and testable.** `electron/db/schema.js` takes an
   explicit path, `FileTraverser` and `query/search.js` are pure, and
   `IndexerService` accepts an injected window.
-- **Phase 3 (code graph + RAG) is deferred** until Phase 1 is stable, because
-  both depend on an index that actually exists and is correct.
+- **RAG is deferred** until the symbol graph is stable, because retrieval that
+  ignores structure duplicates what the graph already answers cheaply.
 
 ## Phase 1 — Make the app functional
 
@@ -67,12 +67,49 @@ gets an explicit "not been indexed yet" answer instead of a guess.
   Windows). `npm test` now targets `test/*.test.js` explicitly so helper files
   under `test/` are not executed as tests.
 
-## Phase 3 — Code graph + RAG (deferred)
+## Phase 3 — Code graph + RAG
 
-`get-graph` and `query-rag` IPC handlers are still stubs. Planned work:
-tree-sitter symbol extraction (the `pipeline/*` modules are empty, but the
-`symbols` and `imports` tables already exist), LanceDB embeddings, and
-retrieval-augmented answers. Depends on Phase 1 being stable.
+| # | Increment | State |
+|---|---|---|
+| I7 | Symbol graph | done |
+| I8 | Embeddings + retrieval-augmented answers | deferred |
+
+### I7 — Symbol graph
+
+The indexer extracts symbols and imports per file while indexing and stores them
+in the `symbols` and `imports` tables, resolving relative imports to a
+`target_file_id` (bare specifiers are recorded as external). `get-graph` returns
+the file/symbol/import graph and the Explorer renders it.
+
+- Extraction: `electron/indexer/SymbolExtractor.js` is a per-language dispatch
+  table (JS/TS/JSX/TSX and Python) returning one shared record shape. It is
+  heuristic rather than a parser, so tree-sitter can replace a single entry
+  later without the indexer or the query layer changing. A language with no
+  extractor returns empty results, never an index failure.
+- Resolution: `electron/indexer/ImportResolver.js` handles relative JS/TS
+  (extension and `/index.*` inference, and a `.js` specifier onto a `.ts` file)
+  and Python dotted relative imports (leading dots, `__init__.py`). Anything it
+  cannot map onto an indexed path stays external.
+- Indexing: `electron/indexer/IndexerService.js` extracts while reading — before
+  the synchronous write transaction — then inserts files, symbols, and imports
+  as one transaction, so a re-index replaces the previous graph wholesale.
+- Graph query: `electron/query/graph.js` — pure `buildGraph` plus the DB-backed
+  `getRepositoryGraph`. Nodes are files, symbols, and external packages; edges
+  are `contains` (file → symbol) and `imports` (file → file/external). The
+  repository id resolves the external id first with a numeric fallback,
+  mirroring `query/search.js`.
+- IPC and UI: `electron/main.js` (`get-graph`), `electron/preload.js`
+  (`graph.get`), and `src/App.jsx` (`CodeGraphPanel` in the Explorer: expand a
+  file to see its symbols, outgoing imports, and incoming imports).
+- Tests: `test/SymbolExtractor.test.js`, `test/ImportResolver.test.js`,
+  `test/graph.test.js`, plus symbol/import coverage in
+  `test/IndexerService.test.js`.
+
+### I8 — Embeddings + retrieval-augmented answers (deferred)
+
+`query-rag` is still a stub. Planned: chunk files, embed chunks, store vectors
+(LanceDB is declared in `package.json` but not installed), and answer by
+retrieving chunks instead of the lexical ranking in `query/search.js`.
 
 ## Testing
 

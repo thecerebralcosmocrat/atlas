@@ -13,6 +13,8 @@ import {
   Plus,
   ArrowUp,
   ArrowLeft,
+  ChevronDown,
+  ChevronRight,
   Globe,
   BookOpen,
   Info,
@@ -301,6 +303,257 @@ function FileTree({ items, depth = 0 }) {
   );
 }
 
+function getGraphApi() {
+  return window.electronAPI?.graph;
+}
+
+function summarizeGraph(nodes, edges) {
+  const fileNodes = [];
+  const nodeById = new Map();
+  const symbolsByFile = new Map();
+  const importsByFile = new Map();
+  let externalCount = 0;
+
+  for (const node of nodes) {
+    nodeById.set(node.id, node);
+
+    if (node.type === "file") {
+      fileNodes.push(node);
+    } else if (node.type === "external") {
+      externalCount += 1;
+    } else {
+      // Symbol nodes carry the numeric file id, and file node ids are
+      // "file:<id>", so the two can be joined without another lookup.
+      const key = `file:${node.fileId}`;
+      const symbols = symbolsByFile.get(key) ?? [];
+
+      symbols.push(node);
+      symbolsByFile.set(key, symbols);
+    }
+  }
+
+  for (const edge of edges) {
+    if (edge.type !== "imports") continue;
+
+    for (const [key, side] of [
+      [edge.source, "outbound"],
+      [edge.target, "inbound"],
+    ]) {
+      const entry = importsByFile.get(key) ?? { outbound: [], inbound: [] };
+
+      entry[side].push(edge);
+      importsByFile.set(key, entry);
+    }
+  }
+
+  return { fileNodes, nodeById, symbolsByFile, importsByFile, externalCount };
+}
+
+function ImportList({ edges, nodeById, direction }) {
+  if (edges.length === 0) {
+    return <div className="mt-1 text-muted-foreground">None</div>;
+  }
+
+  return (
+    <ul className="mt-1 flex flex-col gap-1">
+      {edges.map((edge, index) => {
+        const otherId = direction === "outbound" ? edge.target : edge.source;
+        const other = nodeById.get(otherId);
+        const label =
+          other?.label ?? edge.specifier ?? (direction === "outbound" ? edge.target : edge.source);
+
+        return (
+          <li
+            key={`${edge.specifier ?? "edge"}-${index}`}
+            className="flex items-center gap-2"
+          >
+            <span className="truncate text-foreground">{label}</span>
+            {edge.importType && (
+              <span className="shrink-0 text-[10px] uppercase tracking-wide text-muted-foreground">
+                {edge.importType}
+              </span>
+            )}
+            {edge.external && (
+              <span className="shrink-0 rounded bg-background px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
+                external
+              </span>
+            )}
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+function CodeGraphPanel({ repository }) {
+  const graphApi = useMemo(getGraphApi, []);
+  const [graph, setGraph] = useState(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [expandedId, setExpandedId] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    setGraph(null);
+    setError("");
+    setExpandedId(null);
+
+    if (!graphApi || !repository?.id) return undefined;
+
+    setIsLoading(true);
+    graphApi
+      .get(repository.id)
+      .then((result) => {
+        if (!cancelled) setGraph(result);
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setError(err.message || "Could not load the code graph.");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setIsLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [graphApi, repository?.id]);
+
+  const { fileNodes, nodeById, symbolsByFile, importsByFile, externalCount } =
+    useMemo(
+      () => summarizeGraph(graph?.nodes ?? [], graph?.edges ?? []),
+      [graph],
+    );
+
+  const symbolCount = fileNodes.reduce(
+    (total, file) => total + (symbolsByFile.get(file.id)?.length ?? 0),
+    0,
+  );
+
+  return (
+    <div className="mt-6 rounded-[calc(var(--radius)+0.75rem)] border border-border bg-card p-3 shadow-sm">
+      <div className="px-1 pb-3">
+        <h2 className="text-sm font-medium text-foreground">Code graph</h2>
+        <p className="mt-1 text-xs text-muted-foreground">
+          {fileNodes.length} files · {symbolCount} symbols · {externalCount}{" "}
+          external packages
+        </p>
+      </div>
+
+      {isLoading && (
+        <div className="px-1 pb-1 text-sm text-muted-foreground">
+          Building graph...
+        </div>
+      )}
+
+      {error && (
+        <div className="px-1 pb-1 text-sm text-destructive">{error}</div>
+      )}
+
+      {!isLoading && !error && fileNodes.length === 0 && (
+        <div className="px-1 pb-1 text-sm text-muted-foreground">
+          No symbols or imports were found. Re-index this repository to build
+          the graph.
+        </div>
+      )}
+
+      {!isLoading && !error && fileNodes.length > 0 && (
+        <div className="flex flex-col gap-1">
+          {fileNodes.map((file) => {
+            const isOpen = expandedId === file.id;
+            const symbols = symbolsByFile.get(file.id) ?? [];
+            const { outbound = [], inbound = [] } =
+              importsByFile.get(file.id) ?? {};
+            const Chevron = isOpen ? ChevronDown : ChevronRight;
+
+            return (
+              <div
+                key={file.id}
+                className="rounded-lg border border-transparent transition-colors duration-150 ease-out hover:border-border"
+              >
+                <button
+                  type="button"
+                  aria-expanded={isOpen}
+                  onClick={() => setExpandedId(isOpen ? null : file.id)}
+                  className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm"
+                >
+                  <Chevron className="size-4 shrink-0 text-muted-foreground" />
+                  <span className="truncate text-foreground">{file.path}</span>
+                  <span className="ml-auto shrink-0 text-[11px] uppercase tracking-wide text-muted-foreground">
+                    {symbols.length} sym · {outbound.length} out ·{" "}
+                    {inbound.length} in
+                  </span>
+                </button>
+
+                {isOpen && (
+                  <div className="mx-2 mb-2 ml-6 flex flex-col gap-3 rounded-lg bg-muted/40 p-3 text-xs">
+                    <div>
+                      <div className="font-medium text-muted-foreground">
+                        Symbols
+                      </div>
+                      {symbols.length === 0 ? (
+                        <div className="mt-1 text-muted-foreground">None</div>
+                      ) : (
+                        <ul className="mt-1 flex flex-col gap-1">
+                          {symbols.map((symbol) => (
+                            <li
+                              key={symbol.id}
+                              className="flex items-center gap-2"
+                            >
+                              <span className="shrink-0 rounded bg-background px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
+                                {symbol.type}
+                              </span>
+                              <span className="truncate text-foreground">
+                                {symbol.label}
+                              </span>
+                              <span className="shrink-0 text-muted-foreground">
+                                L{symbol.lineStart}–{symbol.lineEnd}
+                              </span>
+                              {symbol.isExported && (
+                                <span className="shrink-0 text-[10px] uppercase tracking-wide text-muted-foreground">
+                                  exported
+                                </span>
+                              )}
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+
+                    <div>
+                      <div className="font-medium text-muted-foreground">
+                        Imports
+                      </div>
+                      <ImportList
+                        edges={outbound}
+                        nodeById={nodeById}
+                        direction="outbound"
+                      />
+                    </div>
+
+                    <div>
+                      <div className="font-medium text-muted-foreground">
+                        Imported by
+                      </div>
+                      <ImportList
+                        edges={inbound}
+                        nodeById={nodeById}
+                        direction="inbound"
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function Explorer({ selectedRepository, selectedDetails, isInspecting }) {
   const navigate = useNavigate();
 
@@ -348,6 +601,8 @@ function Explorer({ selectedRepository, selectedDetails, isInspecting }) {
             <FileTree items={selectedDetails?.tree ?? []} />
           )}
         </div>
+
+        <CodeGraphPanel repository={selectedRepository} />
       </div>
     </div>
   );

@@ -1,6 +1,10 @@
 const { contextBridge, ipcRenderer } = require("electron");
 
 contextBridge.exposeInMainWorld("electronAPI", {
+  graph: {
+    get: (repositoryId) =>
+      ipcRenderer.invoke("get-graph", { repoId: repositoryId }),
+  },
   repositories: {
     list: () => ipcRenderer.invoke("repositories:list"),
     add: (repositoryUrl) =>

@@ -146,3 +146,83 @@ test("indexing a different path keeps both repositories", async () => {
   assert.notStrictEqual(first.repoId, second.repoId);
   assert.strictEqual(countRepos(db), 2);
 });
+
+test("indexes symbols and links relative imports to the target file", async () => {
+  const db = initializeDatabase(makeTempDbPath());
+  const repo = makeFixtureRepo({
+    "src/a.js": [
+      'import { helper } from "./b";',
+      "",
+      "export function alpha() {",
+      "  return helper();",
+      "}",
+      "",
+    ].join("\n"),
+    "src/b.js": "export function helper() {\n  return 1;\n}\n",
+  });
+
+  const result = await new IndexerService().indexRepo(repo, fakeWindow());
+
+  assert.strictEqual(result.symbolCount, 2);
+  assert.strictEqual(result.importCount, 1);
+
+  const row = db
+    .prepare(
+      `SELECT i.target_file_id, i.resolved_external, f.path AS target_path
+         FROM imports i
+         LEFT JOIN files f ON f.id = i.target_file_id
+        WHERE i.source_file_id IN (SELECT id FROM files WHERE repo_id = ? AND path LIKE '%a.js')`,
+    )
+    .get(result.repoId);
+
+  assert.strictEqual(row.resolved_external, 0);
+  assert.strictEqual(row.target_path, path.join("src", "b.js"));
+});
+
+test("marks a bare package import as external", async () => {
+  const db = initializeDatabase(makeTempDbPath());
+  const repo = makeFixtureRepo({
+    "src/a.js": 'import React from "react";\nexport const view = () => null;\n',
+  });
+
+  const result = await new IndexerService().indexRepo(repo, fakeWindow());
+
+  const row = db
+    .prepare(
+      `SELECT target_file_id, resolved_external, import_specifier
+         FROM imports
+        WHERE source_file_id IN (SELECT id FROM files WHERE repo_id = ?)`,
+    )
+    .get(result.repoId);
+
+  assert.strictEqual(row.import_specifier, "react");
+  assert.strictEqual(row.target_file_id, null);
+  assert.strictEqual(row.resolved_external, 1);
+});
+
+test("re-indexing replaces symbols and imports instead of duplicating them", async () => {
+  const db = initializeDatabase(makeTempDbPath());
+  const repo = makeFixtureRepo({
+    "src/a.js": 'import x from "x";\nexport function alpha() {\n  return x;\n}\n',
+  });
+  const indexer = new IndexerService();
+
+  const first = await indexer.indexRepo(repo, fakeWindow());
+  const second = await indexer.indexRepo(repo, fakeWindow());
+
+  assert.strictEqual(second.symbolCount, first.symbolCount);
+
+  const symbolRows = db
+    .prepare(
+      "SELECT COUNT(*) AS n FROM symbols WHERE file_id IN (SELECT id FROM files WHERE repo_id = ?)",
+    )
+    .get(second.repoId).n;
+  const importRows = db
+    .prepare(
+      "SELECT COUNT(*) AS n FROM imports WHERE source_file_id IN (SELECT id FROM files WHERE repo_id = ?)",
+    )
+    .get(second.repoId).n;
+
+  assert.strictEqual(symbolRows, first.symbolCount);
+  assert.strictEqual(importRows, first.importCount);
+});
