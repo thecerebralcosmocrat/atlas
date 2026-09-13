@@ -55,19 +55,28 @@ const ALLOWED_EXTENSIONS = new Set([
 const MAX_FILE_SIZE_BYTES = 500 * 1024;
 
 class FileTraverser {
-  async traverse(repoPath) {
+  async traverse(repoPath, options = {}) {
     const results = [];
     const resolvedRepoPath = path.resolve(repoPath);
+    const deadline = options.deadline ?? Infinity;
 
-    await this._walk(resolvedRepoPath, resolvedRepoPath, results);
+    await this._walk(resolvedRepoPath, resolvedRepoPath, results, deadline);
 
     return results;
   }
 
-  async _walk(currentDir, repoPath, results) {
+  async _walk(currentDir, repoPath, results, deadline) {
+    if (Date.now() >= deadline) {
+      throw new Error("Repository traversal timed out.");
+    }
+
     const entries = await fs.readdir(currentDir, { withFileTypes: true });
 
     for (const entry of entries) {
+      if (Date.now() >= deadline) {
+        throw new Error("Repository traversal timed out.");
+      }
+
       const absPath = path.join(currentDir, entry.name);
 
       if (entry.isDirectory()) {
@@ -75,7 +84,7 @@ class FileTraverser {
           continue;
         }
 
-        await this._walk(absPath, repoPath, results);
+        await this._walk(absPath, repoPath, results, deadline);
         continue;
       }
 

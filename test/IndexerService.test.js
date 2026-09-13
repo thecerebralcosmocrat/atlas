@@ -1,19 +1,21 @@
 const test = require("node:test");
 const assert = require("node:assert");
 const fs = require("node:fs");
-const os = require("node:os");
 const path = require("node:path");
 
 const { initializeDatabase } = require("../electron/db/schema");
 const { IndexerService } = require("../electron/indexer/IndexerService");
+const { makeTempDir, cleanupTempDirs } = require("./helpers/tempDirs");
+
+test.after(cleanupTempDirs);
 
 function makeTempDbPath() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "atlas-indexdb-"));
+  const dir = makeTempDir("atlas-indexdb-");
   return path.join(dir, "atlas.db");
 }
 
 function makeFixtureRepo(files) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "atlas-indexrepo-"));
+  const root = makeTempDir("atlas-indexrepo-");
 
   for (const [relativePath, contents] of Object.entries(files)) {
     const filePath = path.join(root, relativePath);
@@ -95,6 +97,41 @@ test("re-indexing drops files that no longer exist", async () => {
   assert.strictEqual(result.fileCount, 1);
   assert.strictEqual(countFiles(db, result.repoId), 1);
   assert.strictEqual(countRepos(db), 1);
+});
+
+test("aborts without committing when indexing exceeds its timeout", async () => {
+  const db = initializeDatabase(makeTempDbPath());
+  const repo = makeFixtureRepo({ "a.js": "let a;\n" });
+
+  await assert.rejects(
+    () => new IndexerService().indexRepo(repo, fakeWindow(), {}, { timeoutMs: 0 }),
+    /timed out/i,
+  );
+
+  // The deadline is checked before the synchronous write transaction, so the
+  // abandoned index leaves no partial rows behind.
+  assert.strictEqual(countRepos(db), 0);
+});
+
+test("a renderer that throws on send cannot fail an already-committed index", async () => {
+  const db = initializeDatabase(makeTempDbPath());
+  const repo = makeFixtureRepo({ "a.js": "let a;\n" });
+  // A window torn down mid-index makes webContents.send throw. That must not
+  // propagate: repositories:add would otherwise delete the folder while the
+  // committed repos row survives, pointing at a path that no longer exists.
+  const destroyedWindow = {
+    webContents: {
+      send() {
+        throw new Error("Object has been destroyed");
+      },
+    },
+  };
+
+  const result = await new IndexerService().indexRepo(repo, destroyedWindow);
+
+  assert.strictEqual(result.fileCount, 1);
+  assert.strictEqual(countRepos(db), 1);
+  assert.strictEqual(countFiles(db, result.repoId), 1);
 });
 
 test("indexing a different path keeps both repositories", async () => {

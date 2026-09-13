@@ -1,7 +1,5 @@
 const test = require("node:test");
 const assert = require("node:assert");
-const fs = require("node:fs");
-const os = require("node:os");
 const path = require("node:path");
 
 const { initializeDatabase } = require("../electron/db/schema");
@@ -12,9 +10,12 @@ const {
   legacyRepositoriesImported,
   importLegacyRepositories,
 } = require("../electron/db/repositories");
+const { makeTempDir, cleanupTempDirs } = require("./helpers/tempDirs");
+
+test.after(cleanupTempDirs);
 
 function freshDb() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "atlas-reposdb-"));
+  const dir = makeTempDir("atlas-reposdb-");
   return initializeDatabase(path.join(dir, "atlas.db"));
 }
 

@@ -1,10 +1,12 @@
 const test = require("node:test");
 const assert = require("node:assert");
 const fs = require("node:fs");
-const os = require("node:os");
 const path = require("node:path");
 
 const { FileTraverser } = require("../electron/indexer/FileTraverser");
+const { makeTempDir, cleanupTempDirs } = require("./helpers/tempDirs");
+
+test.after(cleanupTempDirs);
 
 function writeFixtureFile(root, relativePath, contents) {
   const filePath = path.join(root, relativePath);
@@ -13,7 +15,7 @@ function writeFixtureFile(root, relativePath, contents) {
 }
 
 function makeFixtureRepo() {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "atlas-traverse-"));
+  const root = makeTempDir("atlas-traverse-");
 
   writeFixtureFile(root, "src/index.js", "const a = 1;\n\nconst b = 2;\n");
   writeFixtureFile(root, "src/app.jsx", "export default function App() {}\n");
@@ -50,7 +52,7 @@ test("collects only in-scope source files", async () => {
 });
 
 test("collects C# and other newly allowed source files", async () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "atlas-traverse-langs-"));
+  const root = makeTempDir("atlas-traverse-langs-");
   const extensions = [
     "cs",
     "rb",

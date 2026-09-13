@@ -122,18 +122,61 @@ async function backfillRepositoryIndexes(mainWindow) {
     }
 
     try {
-      await new IndexerService().indexRepo(repository.localPath, mainWindow, {
-        externalId: repository.externalId,
-        name: repository.name,
-        url: repository.url,
-        addedAt: repository.addedAt,
-      });
+      await new IndexerService().indexRepo(
+        repository.localPath,
+        mainWindow,
+        {
+          externalId: repository.externalId,
+          name: repository.name,
+          url: repository.url,
+          addedAt: repository.addedAt,
+        },
+        { timeoutMs: INDEX_TIMEOUT_MS },
+      );
     } catch (error) {
       console.error(`Failed to index ${repository.name}:`, error);
     }
   }
 
   mainWindow?.webContents?.send("repositories:changed");
+}
+
+const CLONE_TIMEOUT_MS = 5 * 60 * 1000;
+const INDEX_TIMEOUT_MS = 10 * 60 * 1000;
+const CLONE_URL_SCHEME = /^[a-z][a-z0-9+.-]*:\/\//i;
+const CLONE_SCP_LIKE = /^[^\s/@]+@[^\s/:]+:[^\s]+$/;
+const WINDOWS_ABSOLUTE_PATH = /^[a-z]:[\\/]/i;
+const INVALID_URL_MESSAGE =
+  "Enter a valid repository URL (for example https://github.com/owner/repo.git).";
+
+// Rejects obviously unusable input with an actionable message before we spawn
+// git, so the user sees why the add failed instead of a raw clone error.
+function validateRepositoryUrl(repositoryUrl) {
+  if (!repositoryUrl || typeof repositoryUrl !== "string") {
+    throw new Error("Enter a repository URL.");
+  }
+
+  const trimmedUrl = repositoryUrl.trim();
+
+  if (!trimmedUrl || /\s/.test(trimmedUrl)) {
+    throw new Error(INVALID_URL_MESSAGE);
+  }
+
+  const looksLikePath =
+    CLONE_URL_SCHEME.test(trimmedUrl) ||
+    CLONE_SCP_LIKE.test(trimmedUrl) ||
+    WINDOWS_ABSOLUTE_PATH.test(trimmedUrl) ||
+    trimmedUrl.startsWith("/") ||
+    trimmedUrl.startsWith("./") ||
+    trimmedUrl.startsWith("../") ||
+    trimmedUrl.startsWith("\\\\") ||
+    trimmedUrl.startsWith("~");
+
+  if (!looksLikePath) {
+    throw new Error(INVALID_URL_MESSAGE);
+  }
+
+  return trimmedUrl;
 }
 
 function getRepositoryName(repositoryUrl) {
@@ -443,30 +486,37 @@ function registerIpcHandlers() {
   });
 
   ipcMain.handle("repositories:add", async (event, repositoryUrl) => {
-    if (!repositoryUrl || typeof repositoryUrl !== "string") {
-      throw new Error("Enter a repository URL.");
-    }
-
-    const trimmedUrl = repositoryUrl.trim();
+    const trimmedUrl = validateRepositoryUrl(repositoryUrl);
     const name = getRepositoryName(trimmedUrl);
     const slug = getRepositorySlug(name);
     const id = `${slug}-${Date.now()}`;
     const { repositoriesRoot } = await ensureAtlasStorage();
     const localPath = path.join(repositoriesRoot, id);
     const addedAt = new Date().toISOString();
-
-    await simpleGit().clone(trimmedUrl, localPath, ["--depth", "1"]);
-
-    // Index before recording the repository so a failed index cannot leave a
-    // repository entry behind with no files. The indexer writes the SQLite row,
-    // so the repository is only visible once it has been indexed.
     const mainWindow = BrowserWindow.fromWebContents(event.sender);
-    await new IndexerService().indexRepo(localPath, mainWindow, {
-      externalId: id,
-      name,
-      url: trimmedUrl,
-      addedAt,
-    });
+
+    try {
+      await simpleGit({ timeout: { block: CLONE_TIMEOUT_MS } }).clone(
+        trimmedUrl,
+        localPath,
+        ["--depth", "1"],
+      );
+
+      // Index before recording the repository so a failed index cannot leave a
+      // repository entry behind with no files. The indexer writes the SQLite row,
+      // so the repository is only visible once it has been indexed.
+      await new IndexerService().indexRepo(
+        localPath,
+        mainWindow,
+        { externalId: id, name, url: trimmedUrl, addedAt },
+        { timeoutMs: INDEX_TIMEOUT_MS },
+      );
+    } catch (error) {
+      // A failed clone or index must not leave a half-written repository folder
+      // behind on disk.
+      await fs.rm(localPath, { recursive: true, force: true }).catch(() => {});
+      throw error;
+    }
 
     return inspectRepository(findRepository(id));
   });
@@ -535,7 +585,12 @@ function registerIpcHandlers() {
 
   ipcMain.handle("index-repo", async (event, { repoPath }) => {
     const mainWindow = BrowserWindow.fromWebContents(event.sender);
-    const result = await new IndexerService().indexRepo(repoPath, mainWindow);
+    const result = await new IndexerService().indexRepo(
+      repoPath,
+      mainWindow,
+      {},
+      { timeoutMs: INDEX_TIMEOUT_MS },
+    );
     return { success: true, ...result };
   });
 

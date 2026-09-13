@@ -1,14 +1,15 @@
 const test = require("node:test");
 const assert = require("node:assert");
-const fs = require("node:fs");
-const os = require("node:os");
 const path = require("node:path");
 
 const { initializeDatabase } = require("../electron/db/schema");
 const { rankFiles, searchRepositoryFiles } = require("../electron/query/search");
+const { makeTempDir, cleanupTempDirs } = require("./helpers/tempDirs");
+
+test.after(cleanupTempDirs);
 
 function freshDb() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "atlas-searchdb-"));
+  const dir = makeTempDir("atlas-searchdb-");
   return initializeDatabase(path.join(dir, "atlas.db"));
 }
 
@@ -94,6 +95,47 @@ test("caps how much of a large file is returned", () => {
 
   assert.ok(excerpt.content.length <= 104, "excerpt must be truncated");
   assert.match(excerpt.content, /…$/);
+});
+
+test("trims the cited line range to the lines actually shown when truncated", () => {
+  const filler = "x".repeat(50);
+  const lines = Array.from(
+    { length: 80 },
+    (_, index) => `const needle${index} = "${filler}";`,
+  );
+  const file = { path: "big.js", language: "js", rawContent: lines.join("\n") };
+
+  const [excerpt] = rankFiles("needle", [file], {
+    maxSnippetLines: 40,
+    maxExcerptChars: 200,
+  });
+
+  const shownLines = excerpt.content.replace(/\n…$/, "").split("\n");
+  assert.match(excerpt.content, /…$/);
+  assert.strictEqual(
+    excerpt.endLine - excerpt.startLine + 1,
+    shownLines.length,
+    "cited range must match the lines actually shown",
+  );
+  assert.ok(
+    excerpt.endLine - excerpt.startLine + 1 < 40,
+    "range must be trimmed below the retrieval window",
+  );
+});
+
+test("does not cite a line for a newline the truncation lands on", () => {
+  const file = {
+    path: "src/needle.js",
+    language: "js",
+    rawContent: "needle\nsecond line that is comfortably long\nthird line\n",
+  };
+
+  // 7 chars is exactly "needle\n": the excerpt keeps one line, not two.
+  const [excerpt] = rankFiles("needle", [file], { maxExcerptChars: 7 });
+
+  assert.strictEqual(excerpt.content, "needle\n…");
+  assert.strictEqual(excerpt.startLine, 1);
+  assert.strictEqual(excerpt.endLine, 1);
 });
 
 test("retrieves indexed content by external id and by numeric id", () => {

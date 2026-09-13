@@ -27,7 +27,7 @@ answers questions about the code.
 | I3 | Wire indexer into add flow + DB init | done |
 | I4 | Serve repo list from SQLite (+ migrate JSON) | done (`abd8f98`) |
 | I5 | Ground chat answers in indexed files | done |
-| I6 | Robustness (URL validation, orphan cleanup, timeouts) | next |
+| I6 | Robustness (URL validation, orphan cleanup, timeouts) | done |
 
 ### I5 — Ground chat answers in indexed files
 
@@ -45,15 +45,27 @@ gets an explicit "not been indexed yet" answer instead of a guess.
 - Tests: `test/search.test.js`, plus ask integration tests in
   `test/repositories-add.integration.test.js`.
 
-### I6 — Robustness (backlog)
+### I6 — Robustness
 
-- Validate repository URLs before cloning.
-- Clean up the cloned folder when indexing fails (it is currently orphaned on
-  disk).
-- Add timeouts for clone and index.
-- Tests leak `atlas-*` temp directories.
-- Trim the cited line range when an excerpt is truncated at `maxExcerptChars`,
-  so it never names lines the reader cannot see.
+- URL validation: `validateRepositoryUrl` rejects blank and non-URL input before
+  any filesystem work, so a bad paste cannot create a clone target.
+- Orphan cleanup: the `repositories:add` clone+index sequence is wrapped in a
+  try/catch that removes the clone folder on failure, and the repository row is
+  written by the indexer, so a failed index leaves neither files nor a DB row.
+  Progress notifications go through `notifyProgress`, which swallows a throw
+  from a destroyed window: a courtesy message must never fail an index that has
+  already committed, or the folder would be deleted while the row survived.
+- Timeouts: clone uses `simple-git`'s `timeout.block`; indexing takes a
+  `deadline` checked between files and before the synchronous write transaction,
+  so a timed-out index commits nothing. Both are wired into `repositories:add`,
+  `index-repo`, and the startup backfill.
+- The cited line range is trimmed when an excerpt is truncated at
+  `maxExcerptChars`, so it never names lines the reader cannot see.
+- Tests no longer leak `atlas-*` temp directories: `test/helpers/tempDirs.js`
+  tracks every `makeTempDir` and removes it in a `test.after` hook, clearing
+  SQLite's file lock and git's read-only packfiles first (both block removal on
+  Windows). `npm test` now targets `test/*.test.js` explicitly so helper files
+  under `test/` are not executed as tests.
 
 ## Phase 3 — Code graph + RAG (deferred)
 
@@ -68,7 +80,7 @@ retrieval-augmented answers. Depends on Phase 1 being stable.
 load it. Run everything through the Electron runtime:
 
 ```bash
-npm test        # cross-env ELECTRON_RUN_AS_NODE=1 electron --test
+npm test        # cross-env ELECTRON_RUN_AS_NODE=1 electron --test "test/*.test.js"
 ```
 
 Other useful commands:

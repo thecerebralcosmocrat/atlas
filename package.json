@@ -7,7 +7,7 @@
     "dev": "concurrently -k \"vite --port 5173 --strictPort\" \"wait-on http://localhost:5173 && cross-env NODE_ENV=development electron .\"",
     "build": "vite build && electron-builder",
     "rebuild": "electron-rebuild",
-    "test": "cross-env ELECTRON_RUN_AS_NODE=1 electron --test",
+    "test": "cross-env ELECTRON_RUN_AS_NODE=1 electron --test \"test/*.test.js\"",
     "db:stats": "cross-env ELECTRON_RUN_AS_NODE=1 electron scripts/db-stats.js",
     "index": "cross-env ELECTRON_RUN_AS_NODE=1 electron scripts/index-repo.js"
   },

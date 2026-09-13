@@ -117,4 +117,15 @@ function getDb() {
   return db;
 }
 
-module.exports = { initializeDatabase, getDb };
+// Releases the single connection. Tests call this before deleting their temp
+// directories; Windows refuses to remove a file while SQLite still holds it.
+function closeDatabase() {
+  if (db) {
+    db.close();
+    db = null;
+  }
+
+  dbPath = null;
+}
+
+module.exports = { initializeDatabase, getDb, closeDatabase };

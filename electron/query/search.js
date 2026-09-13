@@ -117,16 +117,27 @@ function buildExcerpt(file, tokens, options) {
   const matchIndices = matchingLineIndices(lines, tokens);
   const { start, end } = bestWindow(lines, matchIndices, options.maxSnippetLines);
   let content = lines.slice(start, end).join("\n");
+  let endLine = Math.min(end, lines.length);
 
   if (content.length > options.maxExcerptChars) {
-    content = `${content.slice(0, options.maxExcerptChars)}\n…`;
+    const shown = content.slice(0, options.maxExcerptChars);
+    // Truncation can land exactly on a newline; that newline starts no line, so
+    // it must not be counted or the cited range would name a line nobody sees.
+    const shownLineCount = shown.endsWith("\n")
+      ? shown.split("\n").length - 1
+      : shown.split("\n").length;
+
+    // Cite only the lines that survived truncation, so the reported range never
+    // names lines the reader cannot see in the excerpt.
+    endLine = start + shownLineCount;
+    content = shown.endsWith("\n") ? `${shown}…` : `${shown}\n…`;
   }
 
   return {
     path: file.path,
     language: file.language ?? "",
     startLine: start + 1,
-    endLine: Math.min(end, lines.length),
+    endLine,
     content,
     matched: matchIndices.length > 0,
   };

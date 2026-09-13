@@ -1,16 +1,20 @@
 const test = require("node:test");
 const assert = require("node:assert");
 const fs = require("node:fs");
-const os = require("node:os");
 const path = require("node:path");
 const { execFileSync } = require("node:child_process");
 
 const { initializeDatabase } = require("../electron/db/schema");
+const { makeTempDir, cleanupTempDirs } = require("./helpers/tempDirs");
+
+test.after(cleanupTempDirs);
 
 // Loads electron/main.js with a stubbed `electron` module so the IPC wiring can
 // be exercised without a real Electron app/BrowserWindow. Returns the captured
-// handlers plus the fake window that stands in for the renderer.
-async function loadMain({ userData }) {
+// handlers plus the fake window that stands in for the renderer. Pass an
+// `indexerClass` to replace the real IndexerService (used to make indexing
+// fail on demand).
+async function loadMain({ userData, indexerClass }) {
   const handlers = new Map();
   const sentEvents = [];
 
@@ -49,12 +53,26 @@ async function loadMain({ userData }) {
   };
   const mainId = require.resolve("../electron/main");
   const previousMain = require.cache[mainId];
+  const indexerId = require.resolve("../electron/indexer/IndexerService");
+  const previousIndexer = require.cache[indexerId];
+
+  if (indexerClass) {
+    require.cache[indexerId] = {
+      id: indexerId,
+      filename: indexerId,
+      loaded: true,
+      exports: { IndexerService: indexerClass },
+    };
+  }
 
   try {
     require(mainId);
   } finally {
     if (previousElectron) require.cache[electronId] = previousElectron;
     else delete require.cache[electronId];
+
+    if (previousIndexer) require.cache[indexerId] = previousIndexer;
+    else delete require.cache[indexerId];
 
     if (previousMain) require.cache[mainId] = previousMain;
     else delete require.cache[mainId];
@@ -70,7 +88,7 @@ async function loadMain({ userData }) {
 }
 
 function makeGitFixtureRepo(files = null) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "atlas-gitfixture-"));
+  const root = makeTempDir("atlas-gitfixture-");
   const entries = files ?? {
     "index.js": "const a = 1;\n",
     "src/app.py": "print('hi')\n",
@@ -95,7 +113,7 @@ function makeGitFixtureRepo(files = null) {
 }
 
 test("repositories:add clones, indexes, and reports progress before persisting", async () => {
-  const userData = fs.mkdtempSync(path.join(os.tmpdir(), "atlas-userdata-"));
+  const userData = makeTempDir("atlas-userdata-");
   const repo = makeGitFixtureRepo();
   const repoUrl = `file:///${repo.replace(/\\/g, "/")}`;
   const { handlers, sentEvents } = await loadMain({ userData });
@@ -147,8 +165,56 @@ test("repositories:add clones, indexes, and reports progress before persisting",
   assert.strictEqual(repositories[0].fileCount, 2);
 });
 
+test("rejects an invalid repository URL before cloning anything", async () => {
+  const userData = makeTempDir("atlas-userdata-");
+  const { handlers } = await loadMain({ userData });
+  const add = handlers.get("repositories:add");
+
+  await assert.rejects(() => add({ sender: {} }, "not a repository url"), {
+    message: /valid repository URL/i,
+  });
+  await assert.rejects(() => add({ sender: {} }, "   "), {
+    message: /valid repository URL/i,
+  });
+
+  // Validation runs before the clone, so no repository folder was created.
+  const repositoriesRoot = path.join(userData, "atlas-data", "repositories");
+  const entries = fs.existsSync(repositoriesRoot)
+    ? fs.readdirSync(repositoriesRoot)
+    : [];
+  assert.deepStrictEqual(entries, []);
+});
+
+test("removes the cloned folder when indexing fails", async () => {
+  const userData = makeTempDir("atlas-userdata-");
+  const repo = makeGitFixtureRepo();
+  const repoUrl = `file:///${repo.replace(/\\/g, "/")}`;
+
+  class FailingIndexer {
+    async indexRepo() {
+      throw new Error("index exploded");
+    }
+  }
+
+  const { handlers } = await loadMain({ userData, indexerClass: FailingIndexer });
+  const add = handlers.get("repositories:add");
+
+  await assert.rejects(() => add({ sender: {} }, repoUrl), {
+    message: /index exploded/,
+  });
+
+  // The half-cloned folder must not be left orphaned on disk...
+  const repositoriesRoot = path.join(userData, "atlas-data", "repositories");
+  assert.deepStrictEqual(fs.readdirSync(repositoriesRoot), []);
+
+  // ...and no repository entry may be recorded.
+  const dbPath = path.join(userData, "atlas-data", "atlas.db");
+  const db = initializeDatabase(dbPath);
+  assert.strictEqual(db.prepare("SELECT COUNT(*) AS n FROM repos").get().n, 0);
+});
+
 test("migrates a legacy repositories.json into SQLite on startup", async () => {
-  const userData = fs.mkdtempSync(path.join(os.tmpdir(), "atlas-userdata-"));
+  const userData = makeTempDir("atlas-userdata-");
   const atlasData = path.join(userData, "atlas-data");
   fs.mkdirSync(atlasData, { recursive: true });
   fs.writeFileSync(
@@ -175,7 +241,7 @@ test("migrates a legacy repositories.json into SQLite on startup", async () => {
 });
 
 test("a malformed legacy repositories.json does not stop the app starting", async () => {
-  const userData = fs.mkdtempSync(path.join(os.tmpdir(), "atlas-userdata-"));
+  const userData = makeTempDir("atlas-userdata-");
   const atlasData = path.join(userData, "atlas-data");
   fs.mkdirSync(atlasData, { recursive: true });
   // Two entries sharing an id but pointing at different paths collide on the
@@ -199,7 +265,7 @@ test("a malformed legacy repositories.json does not stop the app starting", asyn
 });
 
 test("startup backfill indexes a repository that was never indexed", async () => {
-  const userData = fs.mkdtempSync(path.join(os.tmpdir(), "atlas-userdata-"));
+  const userData = makeTempDir("atlas-userdata-");
   const repo = makeGitFixtureRepo();
   const dbPath = path.join(userData, "atlas-data", "atlas.db");
   fs.mkdirSync(path.dirname(dbPath), { recursive: true });
@@ -240,7 +306,7 @@ test("startup backfill indexes a repository that was never indexed", async () =>
 });
 
 test("repositories:ask grounds its answer in indexed file content", async () => {
-  const userData = fs.mkdtempSync(path.join(os.tmpdir(), "atlas-userdata-"));
+  const userData = makeTempDir("atlas-userdata-");
   // README.md is deliberately not an indexable extension, so any mention of
   // the source in the answer must come from the indexed file.
   const repo = makeGitFixtureRepo({
@@ -273,7 +339,7 @@ test("repositories:ask grounds its answer in indexed file content", async () => 
 });
 
 test("repositories:ask says so when a repository has nothing indexed", async () => {
-  const userData = fs.mkdtempSync(path.join(os.tmpdir(), "atlas-userdata-"));
+  const userData = makeTempDir("atlas-userdata-");
   const repo = makeGitFixtureRepo({
     "README.md":
       "# Docs only\n\nThis repository contains documentation and no source files at all.\n",

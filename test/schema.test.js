@@ -1,14 +1,15 @@
 const test = require("node:test");
 const assert = require("node:assert");
-const fs = require("node:fs");
-const os = require("node:os");
 const path = require("node:path");
 const Database = require("better-sqlite3");
 
 const { initializeDatabase } = require("../electron/db/schema");
+const { makeTempDir, cleanupTempDirs } = require("./helpers/tempDirs");
+
+test.after(cleanupTempDirs);
 
 function makeTempDbPath() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "atlas-schema-"));
+  const dir = makeTempDir("atlas-schema-");
   return path.join(dir, "atlas.db");
 }
 

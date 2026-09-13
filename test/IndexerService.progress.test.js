@@ -1,19 +1,21 @@
 const test = require("node:test");
 const assert = require("node:assert");
 const fs = require("node:fs");
-const os = require("node:os");
 const path = require("node:path");
 
 const { initializeDatabase } = require("../electron/db/schema");
 const { IndexerService } = require("../electron/indexer/IndexerService");
+const { makeTempDir, cleanupTempDirs } = require("./helpers/tempDirs");
+
+test.after(cleanupTempDirs);
 
 function makeTempDbPath() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "atlas-progressdb-"));
+  const dir = makeTempDir("atlas-progressdb-");
   return path.join(dir, "atlas.db");
 }
 
 function makeFixtureRepo(files) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "atlas-progressrepo-"));
+  const root = makeTempDir("atlas-progressrepo-");
 
   for (const [relativePath, contents] of Object.entries(files)) {
     const filePath = path.join(root, relativePath);

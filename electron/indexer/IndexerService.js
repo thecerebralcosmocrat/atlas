@@ -3,9 +3,25 @@ const path = require("path");
 const { getDb } = require("../db/schema");
 const { FileTraverser } = require("./FileTraverser");
 
+// Progress is a courtesy to the renderer, not part of the index. If the window
+// is destroyed while a clone is being indexed, send() throws; letting that
+// escape would make repositories:add delete the folder even though the index
+// committed, leaving a repository row pointing at a path that no longer exists.
+function notifyProgress(mainWindow, payload) {
+  try {
+    mainWindow?.webContents?.send("index-progress", payload);
+  } catch {
+    // The renderer is gone; the index itself is unaffected.
+  }
+}
+
 class IndexerService {
-  async indexRepo(repoPath, mainWindow, metadata = {}) {
-    const files = await new FileTraverser().traverse(repoPath);
+  async indexRepo(repoPath, mainWindow, metadata = {}, options = {}) {
+    const { timeoutMs } = options;
+    // A deadline rather than Promise.race: the loop checks it between files and
+    // aborts before the synchronous write transaction, so nothing is committed.
+    const deadline = timeoutMs == null ? Infinity : Date.now() + timeoutMs;
+    const files = await new FileTraverser().traverse(repoPath, { deadline });
     const total = files.length;
     const repoName = metadata.name ?? path.basename(repoPath);
     const rootPath = path.resolve(repoPath);
@@ -16,13 +32,17 @@ class IndexerService {
     const fileRecords = [];
     let completed = 0;
 
-    mainWindow?.webContents?.send("index-progress", {
+    notifyProgress(mainWindow, {
       completed: 0,
       total,
       currentFile: null,
     });
 
     for (const file of files) {
+      if (Date.now() >= deadline) {
+        throw new Error(`Indexing timed out after ${timeoutMs}ms.`);
+      }
+
       try {
         const rawContent = await fs.readFile(file.absPath, "utf8");
 
@@ -37,7 +57,7 @@ class IndexerService {
         completed += 1;
 
         if (completed % 50 === 0) {
-          mainWindow?.webContents?.send("index-progress", {
+          notifyProgress(mainWindow, {
             completed,
             total,
             currentFile: file.path,
@@ -113,9 +133,15 @@ class IndexerService {
       return { repoId, fileCount: fileRecords.length };
     });
 
+    // Last chance to abort: the file loop can overrun the deadline on its final
+    // read, so re-check before the synchronous transaction commits anything.
+    if (Date.now() >= deadline) {
+      throw new Error(`Indexing timed out after ${timeoutMs}ms.`);
+    }
+
     const result = writeIndex();
 
-    mainWindow?.webContents?.send("index-progress", {
+    notifyProgress(mainWindow, {
       completed,
       total,
       currentFile: null,
