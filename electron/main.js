@@ -14,6 +14,10 @@ const { IndexerService } = require("./indexer/IndexerService");
 const { searchRepositoryFiles } = require("./query/search");
 const { getRepositoryGraph } = require("./query/graph");
 const { getStartHere } = require("./query/entrypoints");
+const {
+  answerRepositoryGraphQuestion,
+  getImpact,
+} = require("./query/impact");
 
 const isDev = process.env.NODE_ENV === "development";
 const DEFAULT_NIM_API_URL = "https://integrate.api.nvidia.com/v1/chat/completions";
@@ -571,6 +575,20 @@ function registerIpcHandlers() {
       )}`;
     }
 
+    // Impact, symbol-usage, and unreachability questions have a deterministic
+    // answer in the graph, which beats a lexical guess or the model reading
+    // excerpts. Anything it cannot resolve falls through to those.
+    try {
+      const graphAnswer = answerRepositoryGraphQuestion(
+        repository.id,
+        trimmedQuestion,
+      );
+
+      if (graphAnswer) return graphAnswer;
+    } catch (error) {
+      console.error("Failed to answer from the graph:", error);
+    }
+
     try {
       const nimAnswer = await answerWithNim(
         buildRepositoryContext(answerContext),
@@ -602,6 +620,10 @@ function registerIpcHandlers() {
 
   ipcMain.handle("get-start-here", async (_, { repoId }) => {
     return getStartHere(repoId);
+  });
+
+  ipcMain.handle("get-impact", async (_, { repoId, path: filePath }) => {
+    return getImpact(repoId, filePath);
   });
 
   ipcMain.handle("query-rag", async (_, { question, repoId }) => {

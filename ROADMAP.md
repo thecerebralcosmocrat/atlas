@@ -27,7 +27,7 @@ answers questions about the code.
 |---|---|---|---|
 | 1 — Make the app functional | Add a repo, watch it index, browse files, ask grounded questions | I0–I6 | done |
 | 2 — Code graph + RAG | Explore how files, symbols, and imports connect; retrieve answers by meaning, not keywords | I7–I8 | I7 done, I8 deferred |
-| 3 — Onboarding intelligence | A generated "start here" path plus impact and ownership answers for an unfamiliar codebase | I9–I11 | I9 done, I10–I11 planned |
+| 3 — Onboarding intelligence | A generated "start here" path plus impact and ownership answers for an unfamiliar codebase | I9–I11 | I9–I10 done, I11 planned |
 
 Phase 2 was never written down as its own section — the original draft deferred
 "code graph + RAG" as Phase 3 while the chat-grounding work (I5) and add/index
@@ -135,7 +135,7 @@ the file/symbol/import graph and the Explorer renders it.
 (LanceDB is declared in `package.json` but not installed), and answer by
 retrieving chunks instead of the lexical ranking in `query/search.js`.
 
-## Phase 3 — Onboarding intelligence (planned)
+## Phase 3 — Onboarding intelligence
 
 Phase 3 turns the index and graph from something you query into something that
 explains the codebase for you. Each increment is an answer a new hire would
@@ -144,7 +144,7 @@ otherwise have to assemble by hand, and none of them need a new dependency.
 | # | Increment | State |
 |---|---|---|
 | I9 | Entry points + a guided "start here" path | done |
-| I10 | Impact analysis from the import graph | planned |
+| I10 | Impact analysis from the import graph | done |
 | I11 | Ownership and recency from git history | planned |
 
 ### I9 — Entry points + "start here"
@@ -180,10 +180,33 @@ in the Explorer above the code graph.
 
 ### I10 — Impact analysis
 
-Answer the reverse of I7's edges: "what imports this file?", "where is this
-symbol used?", and the transitive blast radius of changing it — plus modules the
-graph cannot reach from any entry point. Served through the same graph query
-layer and surfaced in the Explorer and chat.
+The reverse of I7's edges: what imports a file, what a change can reach
+transitively, where a symbol is defined and referenced, and which files no entry
+point can reach.
+
+- Query module: `electron/query/impact.js` — pure `fileImpact` (direct importers
+  plus a breadth-first walk backwards over the import edges for the blast
+  radius), `findUnreachableFiles` (breadth-first forwards from the I9 entry
+  points), `findSymbolDefinitions`/`findSymbolReferences`, and
+  `answerGraphQuestion` (turns an impact, usage, or unreachability question into
+  a grounded answer), plus the DB-backed `getImpact` and
+  `answerRepositoryGraphQuestion`.
+- Targets: `resolveGraphTarget` prefers a full path named in the question, then
+  a basename, then a symbol name, so "who imports src/util.js" resolves the file
+  while "who uses formatDate" resolves the symbol. When nothing in the index is
+  named, the question falls through to lexical retrieval and the model, so the
+  graph never guesses an answer.
+- Reachability: entry points come from `detectEntryPoints`, and test files are
+  excluded from the unreachable list. A repository with no entry points reports
+  nothing rather than marking every file dead.
+- Symbol usage: definitions are exact matches from `symbols`; references are a
+  word-boundary scan of indexed contents that skips a definition's own line
+  range, because the graph records definitions but not reference edges yet.
+- IPC and UI: `electron/main.js` (`get-impact`, and grounding
+  `repositories:ask` in the graph before NIM), `electron/preload.js`
+  (`graph.impact`), and `src/App.jsx` (`ImpactPanel`: pick a file to see its
+  direct importers and blast radius, plus the repository-wide unreachable list).
+- Tests: `test/impact.test.js`.
 
 ### I11 — Ownership and recency
 

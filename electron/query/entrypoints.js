@@ -325,4 +325,5 @@ module.exports = {
   detectEntryPoints,
   getStartHere,
   isTestPath,
+  readPackageJson,
 };
