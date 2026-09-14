@@ -4,6 +4,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
   graph: {
     get: (repositoryId) =>
       ipcRenderer.invoke("get-graph", { repoId: repositoryId }),
+    startHere: (repositoryId) =>
+      ipcRenderer.invoke("get-start-here", { repoId: repositoryId }),
   },
   repositories: {
     list: () => ipcRenderer.invoke("repositories:list"),

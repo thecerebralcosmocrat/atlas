@@ -27,7 +27,7 @@ answers questions about the code.
 |---|---|---|---|
 | 1 — Make the app functional | Add a repo, watch it index, browse files, ask grounded questions | I0–I6 | done |
 | 2 — Code graph + RAG | Explore how files, symbols, and imports connect; retrieve answers by meaning, not keywords | I7–I8 | I7 done, I8 deferred |
-| 3 — Onboarding intelligence | A generated "start here" path plus impact and ownership answers for an unfamiliar codebase | I9–I11 | planned |
+| 3 — Onboarding intelligence | A generated "start here" path plus impact and ownership answers for an unfamiliar codebase | I9–I11 | I9 done, I10–I11 planned |
 
 Phase 2 was never written down as its own section — the original draft deferred
 "code graph + RAG" as Phase 3 while the chat-grounding work (I5) and add/index
@@ -143,16 +143,40 @@ otherwise have to assemble by hand, and none of them need a new dependency.
 
 | # | Increment | State |
 |---|---|---|
-| I9 | Entry points + a guided "start here" path | planned |
+| I9 | Entry points + a guided "start here" path | done |
 | I10 | Impact analysis from the import graph | planned |
 | I11 | Ownership and recency from git history | planned |
 
 ### I9 — Entry points + "start here"
 
-Detect where execution begins (`package.json` `main`/`bin`, index files, Python
-`__main__`) and rank the modules worth reading first using the I7 import graph —
-high fan-in files that are not tests. Rendered in the Explorer as an ordered
-reading path, so onboarding starts from a route rather than a bare file tree.
+Where execution begins is detected from `package.json` `main`/`bin`, conventional
+entry basenames (`index`/`main`/`app`/`server`/`cli`, Python `__main__.py`), and
+Python `if __name__ == "__main__"` guards. The modules worth reading next are
+ranked by fan-in from the I7 import graph — how many distinct non-test files
+import a module — and the two are merged into one ordered reading path, rendered
+in the Explorer above the code graph.
+
+- Detection and ranking: `electron/query/entrypoints.js` — pure
+  `detectEntryPoints` and `buildStartHere`, plus the DB-backed `getStartHere`.
+  Entry points are deduped by first-match priority (package.json beats a
+  conventional basename), capped so a tree full of `index.*` files cannot fill
+  the list, and tested in `test/entrypoints.test.js`.
+- Path resolution: a `main`/`bin` written as Node resolves it (no extension, or
+  a directory meaning its `index.*`) is matched against the indexed paths, so a
+  `main` pointing at a skipped `dist/` resolves to nothing rather than a phantom
+  entry. Paths are normalized with the indexer's `toPosix`, because Windows
+  stores backslashes.
+- Fan-in and test exclusion: `buildStartHere` counts distinct importers per file
+  from `getRepositoryGraph`'s edges, ignoring external packages and test
+  importers, and drops test files from the ranking itself. Reads only a
+  `hasMainGuard` flag per file (`instr(raw_content, '__main__')`), so it does not
+  pull every file body into memory.
+- package.json: not an indexed extension, so `getStartHere` reads it from the
+  clone's root path and tolerates a missing or malformed file.
+- Ids: `findRepoPrimaryKey` is now exported from `electron/query/graph.js` and
+  reused here, so both queries resolve the renderer's external id the same way.
+- IPC and UI: `electron/main.js` (`get-start-here`), `electron/preload.js`
+  (`graph.startHere`), and `src/App.jsx` (`StartHerePanel`).
 
 ### I10 — Impact analysis
 

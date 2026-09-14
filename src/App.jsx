@@ -554,6 +554,102 @@ function CodeGraphPanel({ repository }) {
   );
 }
 
+function getStartHereApi() {
+  return window.electronAPI?.graph?.startHere;
+}
+
+function StartHerePanel({ repository }) {
+  const startHereApi = useMemo(getStartHereApi, []);
+  const [startHere, setStartHere] = useState(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+
+    setStartHere(null);
+    setError("");
+
+    if (!startHereApi || !repository?.id) return undefined;
+
+    setIsLoading(true);
+    startHereApi(repository.id)
+      .then((result) => {
+        if (!cancelled) setStartHere(result);
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setError(err.message || "Could not work out where to start.");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setIsLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [startHereApi, repository?.id]);
+
+  const readingPath = startHere?.readingPath ?? [];
+  const entryCount = startHere?.entries?.length ?? 0;
+
+  return (
+    <div className="mt-6 rounded-[calc(var(--radius)+0.75rem)] border border-border bg-card p-3 shadow-sm">
+      <div className="px-1 pb-3">
+        <h2 className="text-sm font-medium text-foreground">Start here</h2>
+        <p className="mt-1 text-xs text-muted-foreground">
+          {entryCount} entry {entryCount === 1 ? "point" : "points"} ·{" "}
+          {readingPath.length} {readingPath.length === 1 ? "file" : "files"}{" "}
+          to read
+        </p>
+      </div>
+
+      {isLoading && (
+        <div className="px-1 pb-1 text-sm text-muted-foreground">
+          Finding entry points...
+        </div>
+      )}
+
+      {error && (
+        <div className="px-1 pb-1 text-sm text-destructive">{error}</div>
+      )}
+
+      {!isLoading && !error && readingPath.length === 0 && (
+        <div className="px-1 pb-1 text-sm text-muted-foreground">
+          No entry points or imports were found. Re-index this repository to
+          build the reading path.
+        </div>
+      )}
+
+      {!isLoading && !error && readingPath.length > 0 && (
+        <ol className="flex flex-col gap-1">
+          {readingPath.map((item, index) => (
+            <li
+              key={item.path}
+              className="flex items-center gap-2 rounded-lg px-2 py-1.5 text-sm"
+            >
+              <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-muted text-[11px] text-muted-foreground">
+                {index + 1}
+              </span>
+              <span className="truncate text-foreground">{item.path}</span>
+              {item.isEntry ? (
+                <span className="ml-auto shrink-0 rounded bg-background px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
+                  {item.reason}
+                </span>
+              ) : (
+                <span className="ml-auto shrink-0 text-[11px] uppercase tracking-wide text-muted-foreground">
+                  {item.fanIn} importer{item.fanIn === 1 ? "" : "s"}
+                </span>
+              )}
+            </li>
+          ))}
+        </ol>
+      )}
+    </div>
+  );
+}
+
 function Explorer({ selectedRepository, selectedDetails, isInspecting }) {
   const navigate = useNavigate();
 
@@ -602,6 +698,7 @@ function Explorer({ selectedRepository, selectedDetails, isInspecting }) {
           )}
         </div>
 
+        <StartHerePanel repository={selectedRepository} />
         <CodeGraphPanel repository={selectedRepository} />
       </div>
     </div>

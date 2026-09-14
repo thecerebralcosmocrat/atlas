@@ -179,4 +179,4 @@ function getRepositoryGraph(repositoryId) {
   return buildGraph({ files, symbols, imports });
 }
 
-module.exports = { buildGraph, getRepositoryGraph };
+module.exports = { buildGraph, getRepositoryGraph, findRepoPrimaryKey };

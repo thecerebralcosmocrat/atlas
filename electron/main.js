@@ -13,6 +13,7 @@ const {
 const { IndexerService } = require("./indexer/IndexerService");
 const { searchRepositoryFiles } = require("./query/search");
 const { getRepositoryGraph } = require("./query/graph");
+const { getStartHere } = require("./query/entrypoints");
 
 const isDev = process.env.NODE_ENV === "development";
 const DEFAULT_NIM_API_URL = "https://integrate.api.nvidia.com/v1/chat/completions";
@@ -597,6 +598,10 @@ function registerIpcHandlers() {
 
   ipcMain.handle("get-graph", async (_, { repoId }) => {
     return getRepositoryGraph(repoId);
+  });
+
+  ipcMain.handle("get-start-here", async (_, { repoId }) => {
+    return getStartHere(repoId);
   });
 
   ipcMain.handle("query-rag", async (_, { question, repoId }) => {
