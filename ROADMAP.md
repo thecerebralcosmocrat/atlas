@@ -27,7 +27,7 @@ answers questions about the code.
 |---|---|---|---|
 | 1 — Make the app functional | Add a repo, watch it index, browse files, ask grounded questions | I0–I6 | done |
 | 2 — Code graph + RAG | Explore how files, symbols, and imports connect; retrieve answers by meaning, not keywords | I7–I8 | I7 done, I8 deferred |
-| 3 — Onboarding intelligence | A generated "start here" path plus impact and ownership answers for an unfamiliar codebase | I9–I11 | I9–I10 done, I11 planned |
+| 3 — Onboarding intelligence | A generated "start here" path plus impact and ownership answers for an unfamiliar codebase | I9–I11 | done |
 
 Phase 2 was never written down as its own section — the original draft deferred
 "code graph + RAG" as Phase 3 while the chat-grounding work (I5) and add/index
@@ -145,7 +145,7 @@ otherwise have to assemble by hand, and none of them need a new dependency.
 |---|---|---|
 | I9 | Entry points + a guided "start here" path | done |
 | I10 | Impact analysis from the import graph | done |
-| I11 | Ownership and recency from git history | planned |
+| I11 | Ownership and recency from git history | done |
 
 ### I9 — Entry points + "start here"
 
@@ -210,10 +210,36 @@ point can reach.
 
 ### I11 — Ownership and recency
 
-Read `git log`/`blame` through `simple-git` (already a dependency) to annotate
-the graph with how recently each file changed and who has touched it most —
-churn hotspots and likely reviewers per file, so "who should I ask?" has an
-answer grounded in the clone the app already has.
+Every indexed file is annotated from the clone's `git log` with how often it
+changed, when it last changed, and who touched it most — churn hotspots, recent
+changes, and likely reviewers per file — so "who should I ask?" has an answer
+grounded in the history the app already cloned.
+
+- Query module: `electron/query/ownership.js` — pure `parseGitLog`,
+  `buildOwnership`, `detectOwnershipIntent`, and `answerOwnershipQuestion`,
+  plus the git-backed `readGitHistory`, `getOwnership`, and
+  `answerRepositoryOwnershipQuestion`.
+- History depth: the app clones with `--depth 1`, so the first ownership read
+  deepens the clone by a bounded 200 commits (`git fetch --deepen`), once per
+  clone per process. A failed fetch (offline, no remote) keeps whatever history
+  is present rather than erroring, and a clone that is still shallow says so in
+  the answer instead of implying it is complete.
+- Ranking: per file, the commit count, last change, and authors ordered by
+  commits (the likely reviewers); repository-wide, churn hotspots, recent
+  changes, and contributors with their commit and distinct indexed-file counts.
+  Test paths are left out of the hotspot and recent rankings so they do not
+  crowd out application code, and a contributor whose commits only touch
+  unindexed files (docs) still counts as a commit.
+- Targets: reuses `resolveGraphTarget` from `query/impact.js`, so a question
+  that names a file resolves the file and a question about the repository as a
+  whole falls back to the contributor ranking.
+- IPC and UI: `electron/main.js` (`get-ownership`, and answering ownership and
+  recency in `repositories:ask` before NIM), `electron/preload.js`
+  (`graph.ownership`), and `src/App.jsx` (`OwnershipPanel`: pick a file for its
+  likely reviewers, plus the repository's churn hotspots, recent changes, and
+  top contributors).
+- Tests: `test/ownership.test.js`, including a shallow clone deepened end to
+  end from a local origin.
 
 ## Testing
 

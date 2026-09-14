@@ -18,6 +18,10 @@ const {
   answerRepositoryGraphQuestion,
   getImpact,
 } = require("./query/impact");
+const {
+  answerRepositoryOwnershipQuestion,
+  getOwnership,
+} = require("./query/ownership");
 
 const isDev = process.env.NODE_ENV === "development";
 const DEFAULT_NIM_API_URL = "https://integrate.api.nvidia.com/v1/chat/completions";
@@ -589,6 +593,19 @@ function registerIpcHandlers() {
       console.error("Failed to answer from the graph:", error);
     }
 
+    // Ownership and recency come from the clone's git history, which the graph
+    // cannot see. Falls through to retrieval when it has nothing to say.
+    try {
+      const ownershipAnswer = await answerRepositoryOwnershipQuestion(
+        repository.id,
+        trimmedQuestion,
+      );
+
+      if (ownershipAnswer) return ownershipAnswer;
+    } catch (error) {
+      console.error("Failed to answer from git history:", error);
+    }
+
     try {
       const nimAnswer = await answerWithNim(
         buildRepositoryContext(answerContext),
@@ -624,6 +641,10 @@ function registerIpcHandlers() {
 
   ipcMain.handle("get-impact", async (_, { repoId, path: filePath }) => {
     return getImpact(repoId, filePath);
+  });
+
+  ipcMain.handle("get-ownership", async (_, { repoId, path: filePath }) => {
+    return getOwnership(repoId, filePath);
   });
 
   ipcMain.handle("query-rag", async (_, { question, repoId }) => {

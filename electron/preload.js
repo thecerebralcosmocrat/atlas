@@ -8,6 +8,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ipcRenderer.invoke("get-start-here", { repoId: repositoryId }),
     impact: (repositoryId, filePath) =>
       ipcRenderer.invoke("get-impact", { repoId: repositoryId, path: filePath }),
+    ownership: (repositoryId, filePath) =>
+      ipcRenderer.invoke("get-ownership", { repoId: repositoryId, path: filePath }),
   },
   repositories: {
     list: () => ipcRenderer.invoke("repositories:list"),
