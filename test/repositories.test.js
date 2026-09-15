@@ -6,13 +6,19 @@ const { initializeDatabase } = require("../electron/db/schema");
 const {
   listRepositories,
   listUnindexedRepositories,
+  listRepositoriesWithoutChunks,
   findRepository,
   legacyRepositoriesImported,
   importLegacyRepositories,
 } = require("../electron/db/repositories");
+const { encodeVector } = require("../electron/query/vectors");
 const { makeTempDir, cleanupTempDirs } = require("./helpers/tempDirs");
 
 test.after(cleanupTempDirs);
+
+// The model the chunk backfill is asked about. Chunks are only "already there"
+// for the model that produced them.
+const EMBED_MODEL = "test-embed";
 
 function freshDb() {
   const dir = makeTempDir("atlas-reposdb-");
@@ -93,6 +99,94 @@ test("lists only repositories that have never been indexed", () => {
       externalId: null,
     },
   ]);
+});
+
+// Inserts an indexed repository with one file, and optionally one chunk on
+// that file, so the chunk backfill query has something to select from.
+function insertIndexedRepo(db, name, { withChunk = false } = {}) {
+  const { lastInsertRowid: repoId } = db
+    .prepare(
+      `INSERT INTO repos (name, root_path, indexed_at, file_count)
+       VALUES (?, ?, ?, ?)`,
+    )
+    .run(name, `C:/data/repos/${name}`, 123, 1);
+  const { lastInsertRowid: fileId } = db
+    .prepare(
+      `INSERT INTO files (repo_id, path, abs_path, language, loc, raw_content, indexed_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(repoId, `${name}.js`, `C:/abs/${name}.js`, "js", 1, "let a;\n", 123);
+
+  if (withChunk) {
+    db.prepare(
+      `INSERT INTO chunks (file_id, ordinal, start_line, end_line, content, embedding, dims, model)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(fileId, 0, 1, 1, "let a;", encodeVector([1, 0]), 2, EMBED_MODEL);
+  }
+
+  return Number(repoId);
+}
+
+test("lists indexed repositories that have no chunks yet", () => {
+  const db = freshDb();
+  insertIndexedRepo(db, "pre-chunking");
+  insertIndexedRepo(db, "already-chunked", { withChunk: true });
+  // Never indexed, so the chunk backfill must leave it to the indexing backfill.
+  db.prepare("INSERT INTO repos (name, root_path) VALUES (?, ?)").run(
+    "unindexed",
+    "C:/data/repos/unindexed",
+  );
+
+  assert.deepStrictEqual(listRepositoriesWithoutChunks(EMBED_MODEL), [
+    {
+      id: "1",
+      name: "pre-chunking",
+      localPath: "C:/data/repos/pre-chunking",
+      url: null,
+      addedAt: null,
+      externalId: null,
+    },
+  ]);
+});
+
+test("skips an indexed repository whose last index found no files", () => {
+  const db = freshDb();
+  db.prepare(
+    "INSERT INTO repos (name, root_path, indexed_at, file_count) VALUES (?, ?, ?, ?)",
+  ).run("empty", "C:/data/repos/empty", 123, 0);
+
+  // Nothing to chunk means a re-index would produce no chunks again, so it
+  // would be retried on every launch for nothing.
+  assert.deepStrictEqual(listRepositoriesWithoutChunks(EMBED_MODEL), []);
+});
+
+test("skips a repository when any one of its files has chunks", () => {
+  const db = freshDb();
+  const repoId = insertIndexedRepo(db, "partial");
+  db.prepare(
+    `INSERT INTO files (repo_id, path, abs_path, language, loc, raw_content, indexed_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+  ).run(repoId, "second.js", "C:/abs/second.js", "js", 1, "let b;\n", 123);
+  db.prepare(
+    `INSERT INTO chunks (file_id, ordinal, start_line, end_line, content, embedding, dims, model)
+     SELECT id, 0, 1, 1, 'let a;', ?, 2, '${EMBED_MODEL}' FROM files WHERE path = 'partial.js'`,
+  ).run(encodeVector([1, 0]));
+
+  assert.deepStrictEqual(listRepositoriesWithoutChunks(EMBED_MODEL), []);
+});
+
+test("re-lists a repository whose chunks came from a different model", () => {
+  const db = freshDb();
+  insertIndexedRepo(db, "old-model", { withChunk: true });
+
+  // Chunks from a model that is no longer configured sit in a different vector
+  // space and are filtered out of retrieval, so they must not count as
+  // chunked for the model in use now.
+  assert.deepStrictEqual(
+    listRepositoriesWithoutChunks("new-model").map((repo) => repo.name),
+    ["old-model"],
+  );
+  assert.deepStrictEqual(listRepositoriesWithoutChunks(EMBED_MODEL), []);
 });
 
 test("imports a legacy JSON repository and records the marker", () => {

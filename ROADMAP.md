@@ -14,8 +14,15 @@ answers questions about the code.
 - **Modules stay injectable and testable.** `electron/db/schema.js` takes an
   explicit path, `FileTraverser` and `query/search.js` are pure, and
   `IndexerService` accepts an injected window.
-- **RAG is deferred** until the symbol graph is stable, because retrieval that
-  ignores structure duplicates what the graph already answers cheaply.
+- **Retrieval augments, it never gates.** RAG waited for the symbol graph to be
+  stable (I7), because retrieval that ignores structure duplicates what the
+  graph already answers cheaply; it then landed in I8 as an enhancement. A
+  missing API key, an offline machine, or a repository indexed before chunking
+  falls back to lexical ranking instead of failing the answer.
+- **Embeddings live in SQLite, not a vector database.** Chunk vectors are
+  Float32 BLOBs in the same database as the rest of the index, ranked by brute
+  force. Thousands of chunks scan in tens of milliseconds, so a second store to
+  keep in sync would buy nothing measurable.
 - **Every phase ships a working product.** Phase 1 ends with an app that can
   onboard a repository and answer questions about it, Phase 2 with structural
   and semantic answers, Phase 3 with a generated explanation of where to start.
@@ -26,7 +33,7 @@ answers questions about the code.
 | Phase | Product at the end | Increments | State |
 |---|---|---|---|
 | 1 — Make the app functional | Add a repo, watch it index, browse files, ask grounded questions | I0–I6 | done |
-| 2 — Code graph + RAG | Explore how files, symbols, and imports connect; retrieve answers by meaning, not keywords | I7–I8 | I7 done, I8 deferred |
+| 2 — Code graph + RAG | Explore how files, symbols, and imports connect; retrieve answers by meaning, not keywords | I7–I8 | done |
 | 3 — Onboarding intelligence | A generated "start here" path plus impact and ownership answers for an unfamiliar codebase | I9–I11 | done |
 
 Phase 2 was never written down as its own section — the original draft deferred
@@ -96,7 +103,7 @@ gets an explicit "not been indexed yet" answer instead of a guess.
 | # | Increment | State |
 |---|---|---|
 | I7 | Symbol graph | done |
-| I8 | Embeddings + retrieval-augmented answers | deferred |
+| I8 | Embeddings + retrieval-augmented answers | done |
 
 ### I7 — Symbol graph
 
@@ -129,11 +136,77 @@ the file/symbol/import graph and the Explorer renders it.
   `test/graph.test.js`, plus symbol/import coverage in
   `test/IndexerService.test.js`.
 
-### I8 — Embeddings + retrieval-augmented answers (deferred)
+### I8 — Embeddings + retrieval-augmented answers
 
-`query-rag` is still a stub. Planned: chunk files, embed chunks, store vectors
-(LanceDB is declared in `package.json` but not installed), and answer by
-retrieving chunks instead of the lexical ranking in `query/search.js`.
+`repositories:ask` now retrieves by meaning: files are chunked while indexing,
+each chunk is embedded through NVIDIA NIM and stored as a Float32 BLOB, and a
+question is answered from the chunks whose vectors are closest to it. Retrieval
+is an enhancement, so the lexical ranking from I5 still answers when there are no
+vectors to compare against.
+
+- Chunking: `electron/pipeline/chunker.js` — pure line-window chunking
+  (`chunkFile`) with a character ceiling and a line overlap, so a symbol on a
+  window boundary still appears whole in one chunk. Nothing is cut mid-line, so
+  a chunk's start/end line always maps onto lines that exist and can be cited.
+- Embedding: `electron/pipeline/embedder.js` — `createNimEmbedder` batches
+  through NIM's OpenAI-compatible `/embeddings` endpoint and labels each side
+  (`input_type: "passage"` while indexing, `"query"` for a question), because
+  these models are asymmetric and the same text lands in a different place as a
+  query. It returns null without a key, takes an injectable `fetchImpl` so tests
+  never hit the network, and rejects any response it cannot line up with its
+  input: a short one would shift every later vector onto the wrong chunk, and a
+  full-length one whose items carry no vector would be stored as `undefined`
+  and only fail later, inside the indexer's write transaction, where the whole
+  index would be lost instead of one vector.
+- Storage and scoring: `electron/query/vectors.js` — `encodeVector`/
+  `decodeVector` for the BLOB (copying the bytes out first, since SQLite can
+  hand back a Buffer at any offset and a `Float32Array` view needs 4-byte
+  alignment) plus a computed cosine similarity that scores a dimension mismatch
+  as 0 rather than guessing. The `chunks` table is created by
+  `electron/db/schema.js`, and candidates are filtered by `model`: a chunk left
+  behind by a model that is no longer configured lives in a different vector
+  space, where a similarity score would be meaningless.
+- Retrieval: `electron/query/search.js` — `rankChunks` keeps the best chunk per
+  file and applies the excerpt budget, dropping any chunk whose score is not
+  positive. That test is written as "not greater than zero" rather than "less
+  than or equal to zero" so a stored vector of non-numbers, which scores NaN, is
+  dropped too: a repository whose vectors are all unusable then falls through to
+  the lexical pass instead of being answered from scores nothing can be ordered
+  by. `semanticSearch` streams candidates with
+  SQLite's `iterate` so a large repository is ranked one row at a time (closing
+  the iterator in a `finally` so a corrupt BLOB cannot wedge the connection),
+  and `retrieveRepositoryExcerpts` prefers chunks and falls back to
+  `searchRepositoryFiles`. Both paths cite excerpts through one `clipExcerpt`,
+  so a semantic and a lexical excerpt trim identically.
+- Indexing: `electron/indexer/IndexerService.js` chunks and embeds after the
+  file reads and before the synchronous write transaction, because embedding is
+  a network round trip and better-sqlite3 transactions must stay synchronous.
+  Embedding failure is all-or-nothing per repository and non-fatal: a
+  half-embedded index would answer some questions semantically and silently fall
+  back for others, which reads as a retrieval bug rather than a missing API call.
+  A response with the wrong number of vectors counts as a failure too, because a
+  short one would shift every later vector onto the wrong chunk.
+- Migration: `listRepositoriesWithoutChunks` (`electron/db/repositories.js`)
+  finds repositories indexed before chunking existed, and the startup backfill
+  re-indexes them once an embedder is configured — without a key it would
+  re-read every repository on every launch to produce no chunks at all. The
+  query is scoped to the configured model, so a repository whose chunks came
+  from a model that is no longer configured is embedded again rather than
+  counted as done, and a repository whose last index found no files is
+  excluded. A repository with files that produced no chunks is retried on the
+  next launch: an embed that failed should be retried, and one with nothing
+  worth chunking costs a re-read and no request.
+- Wiring: `electron/main.js` — `getNimEmbedder` (built per use, and null
+  without a key) is passed to all three `indexRepo` call sites and to the
+  `repositories:ask` handler. The dead `query-rag` stub is gone; the question
+  path was already `repositories:ask`.
+- LanceDB is left in `package.json` but unused. Vectors live in SQLite with the
+  rest of the index, which is the single source of truth, so there is no second
+  store to keep in sync.
+- Tests: `test/chunker.test.js`, `test/vectors.test.js`,
+  `test/embedder.test.js`, `test/retrieval.test.js`,
+  `test/IndexerService.chunks.test.js`, and the chunk-backfill cases in
+  `test/repositories.test.js`.
 
 ## Phase 3 — Onboarding intelligence
 

@@ -49,9 +49,27 @@ const SCHEMA_STATEMENTS = [
     line_end INTEGER,
     is_exported INTEGER DEFAULT 0
   )`,
+  // Embeddable slices of a file, with the vector stored as a Float32 BLOB. The
+  // source of truth for repository content stays `files`; chunks exist so a
+  // question can be matched against meaning rather than literal terms. `model`
+  // records which embedding model produced the vector, so chunks embedded by a
+  // model that is no longer configured are skipped instead of scored against
+  // an incompatible vector space.
+  `CREATE TABLE IF NOT EXISTS chunks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    file_id INTEGER,
+    ordinal INTEGER,
+    start_line INTEGER,
+    end_line INTEGER,
+    content TEXT,
+    embedding BLOB,
+    dims INTEGER,
+    model TEXT
+  )`,
   `CREATE INDEX IF NOT EXISTS idx_files_repo_id_path ON files(repo_id, path)`,
   `CREATE INDEX IF NOT EXISTS idx_imports_source_file_id ON imports(source_file_id)`,
   `CREATE INDEX IF NOT EXISTS idx_symbols_file_id ON symbols(file_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_chunks_file_id ON chunks(file_id)`,
 ];
 
 // Columns added after the original schema shipped. `CREATE TABLE IF NOT EXISTS`

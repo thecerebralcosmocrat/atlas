@@ -1,4 +1,6 @@
 const { getDb } = require("../db/schema");
+const { findRepoPrimaryKey } = require("./graph");
+const { decodeVector, cosineSimilarity } = require("./vectors");
 
 // Function words and generic repository vocabulary. Dropping these keeps a
 // question like "where is the entry point?" focused on "entry point" rather
@@ -112,34 +114,46 @@ function bestWindow(lines, matchIndices, maxLines) {
   return { start, end: Math.min(lines.length, start + maxLines) };
 }
 
+// Trims an excerpt to the character budget and shortens the cited line range to
+// the lines that survived, so the reported range never names a line the reader
+// cannot see. Shared by both retrieval paths: a lexical excerpt and a chunk are
+// cited the same way.
+function clipExcerpt(startLine, endLine, content, maxExcerptChars) {
+  if (content.length <= maxExcerptChars) {
+    return { content, endLine };
+  }
+
+  const shown = content.slice(0, maxExcerptChars);
+  // Truncation can land exactly on a newline; that newline starts no line, so
+  // it must not be counted.
+  const shownLineCount = shown.endsWith("\n")
+    ? shown.split("\n").length - 1
+    : shown.split("\n").length;
+
+  return {
+    content: shown.endsWith("\n") ? `${shown}…` : `${shown}\n…`,
+    endLine: startLine + shownLineCount - 1,
+  };
+}
+
 function buildExcerpt(file, tokens, options) {
   const lines = String(file.rawContent ?? "").split(/\r?\n/);
   const matchIndices = matchingLineIndices(lines, tokens);
   const { start, end } = bestWindow(lines, matchIndices, options.maxSnippetLines);
-  let content = lines.slice(start, end).join("\n");
-  let endLine = Math.min(end, lines.length);
-
-  if (content.length > options.maxExcerptChars) {
-    const shown = content.slice(0, options.maxExcerptChars);
-    // Truncation can land exactly on a newline; that newline starts no line, so
-    // it must not be counted or the cited range would name a line nobody sees.
-    const shownLineCount = shown.endsWith("\n")
-      ? shown.split("\n").length - 1
-      : shown.split("\n").length;
-
-    // Cite only the lines that survived truncation, so the reported range never
-    // names lines the reader cannot see in the excerpt.
-    endLine = start + shownLineCount;
-    content = shown.endsWith("\n") ? `${shown}…` : `${shown}\n…`;
-  }
+  const content = lines.slice(start, end).join("\n");
+  const clipped = clipExcerpt(
+    start + 1,
+    Math.min(end, lines.length),
+    content,
+    options.maxExcerptChars,
+  );
 
   return {
     path: file.path,
     language: file.language ?? "",
     startLine: start + 1,
-    endLine,
-    content,
-    matched: matchIndices.length > 0,
+    endLine: clipped.endLine,
+    content: clipped.content,
   };
 }
 
@@ -214,8 +228,162 @@ function searchRepositoryFiles(repositoryId, question, options = {}) {
   return rankFiles(question, rows, options);
 }
 
+// --- Semantic retrieval -----------------------------------------------------
+
+// Only chunks embedded by the configured model are candidates. A chunk left
+// behind by a model that is no longer configured lives in a different vector
+// space, where a similarity score would be meaningless.
+const CHUNK_QUERY = `
+  SELECT c.ordinal,
+         c.start_line AS startLine,
+         c.end_line   AS endLine,
+         c.content,
+         c.embedding,
+         f.path,
+         f.language
+    FROM chunks c
+    JOIN files f ON f.id = c.file_id
+   WHERE f.repo_id = ? AND c.model = ?`;
+
+// Ranks chunk vectors against a question vector.
+//
+// `rows` is any iterable of joined chunk rows rather than an array, so the
+// database-backed caller can stream a large repository one chunk at a time
+// while this stays a pure function. Keeping only the best chunk per file is
+// what bounds memory as the scan proceeds: losing vectors are dropped instead
+// of accumulating.
+function rankChunks(questionVector, rows, options = {}) {
+  const resolved = { ...DEFAULT_OPTIONS, ...options };
+  const bestByPath = new Map();
+
+  for (const row of rows) {
+    const score = cosineSimilarity(questionVector, decodeVector(row.embedding));
+
+    // `!(score > 0)` rather than `score <= 0`: a stored vector of non-numbers
+    // scores NaN, and NaN is not evidence of relevance. Dropping it lets the
+    // repository fall back to lexical ranking instead of being answered from
+    // scores nothing can be ordered by.
+    if (!(score > 0)) continue;
+
+    const current = bestByPath.get(row.path);
+
+    if (current && current.score >= score) continue;
+
+    // One excerpt per file, as in the lexical path: several chunks of the same
+    // file would crowd the rest of the repository out of the context.
+    bestByPath.set(row.path, {
+      score,
+      row: { ...row, embedding: undefined },
+    });
+  }
+
+  const ranked = [...bestByPath.values()].sort(
+    (left, right) =>
+      right.score - left.score ||
+      String(left.row.path).localeCompare(String(right.row.path)) ||
+      left.row.startLine - right.row.startLine,
+  );
+  const results = [];
+  let totalChars = 0;
+
+  for (const { score, row } of ranked) {
+    if (results.length >= resolved.limit) break;
+
+    const clipped = clipExcerpt(
+      row.startLine,
+      row.endLine,
+      row.content,
+      resolved.maxExcerptChars,
+    );
+
+    // Always keep at least one excerpt, then stop before the retrieved context
+    // grows past what the model can usefully read.
+    if (
+      results.length > 0 &&
+      totalChars + clipped.content.length > resolved.maxTotalChars
+    ) {
+      break;
+    }
+
+    totalChars += clipped.content.length;
+    results.push({
+      path: row.path,
+      language: row.language ?? "",
+      startLine: row.startLine,
+      endLine: clipped.endLine,
+      content: clipped.content,
+      score,
+    });
+  }
+
+  return results;
+}
+
+// Embeds the question and ranks the repository's chunks against it. Returns an
+// empty list when there is nothing to compare against — no embedder, no such
+// repository, or no chunks for the configured model — leaving the fallback
+// decision to retrieveRepositoryExcerpts.
+async function semanticSearch(repositoryId, question, options = {}) {
+  const { embedder, ...ranking } = options;
+
+  if (!embedder) return [];
+
+  const repoId = findRepoPrimaryKey(repositoryId);
+
+  if (repoId === null) return [];
+
+  const questionVector = await embedder.embedQuery(question);
+
+  if (!questionVector) return [];
+
+  const rows = getDb()
+    .prepare(CHUNK_QUERY)
+    .iterate(repoId, embedder.model);
+
+  // The iterator is left open if ranking throws partway through, which would
+  // hold the statement busy for every later query on this connection.
+  try {
+    return rankChunks(questionVector, rows, ranking);
+  } finally {
+    rows.return();
+  }
+}
+
+// The excerpts a question should be answered from: chunks matched by meaning
+// when the repository has vectors for the configured model, lexical ranking
+// otherwise.
+//
+// Semantic retrieval is an enhancement, never a dependency. A missing API key,
+// an offline machine, a repository indexed before chunking existed, and a
+// failure partway through a request all land on the lexical pass that ships
+// with I5 instead of breaking the answer.
+async function retrieveRepositoryExcerpts(repositoryId, question, options = {}) {
+  const { embedder, ...rest } = options;
+
+  if (embedder) {
+    try {
+      const chunks = await semanticSearch(repositoryId, question, {
+        embedder,
+        ...rest,
+      });
+
+      if (chunks.length > 0) return chunks;
+    } catch (error) {
+      console.error(
+        "Semantic retrieval failed; falling back to lexical search:",
+        error,
+      );
+    }
+  }
+
+  return searchRepositoryFiles(repositoryId, question, rest);
+}
+
 module.exports = {
   tokenize,
   rankFiles,
   searchRepositoryFiles,
+  rankChunks,
+  semanticSearch,
+  retrieveRepositoryExcerpts,
 };

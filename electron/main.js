@@ -6,12 +6,14 @@ const { initializeDatabase } = require("./db/schema");
 const {
   listRepositories,
   listUnindexedRepositories,
+  listRepositoriesWithoutChunks,
   findRepository,
   legacyRepositoriesImported,
   importLegacyRepositories,
 } = require("./db/repositories");
 const { IndexerService } = require("./indexer/IndexerService");
-const { searchRepositoryFiles } = require("./query/search");
+const { retrieveRepositoryExcerpts } = require("./query/search");
+const { createNimEmbedder } = require("./pipeline/embedder");
 const { getRepositoryGraph } = require("./query/graph");
 const { getStartHere } = require("./query/entrypoints");
 const {
@@ -26,6 +28,18 @@ const {
 const isDev = process.env.NODE_ENV === "development";
 const DEFAULT_NIM_API_URL = "https://integrate.api.nvidia.com/v1/chat/completions";
 const DEFAULT_NIM_MODEL = "deepseek-ai/deepseek-v4-pro";
+
+// Embeddings use the same NIM account as the answers. Built per use rather than
+// cached so it always sees the environment loadLocalEnv has loaded, and it
+// returns null without a key: semantic retrieval is an enhancement, so a
+// missing key must not stop indexing or answering questions.
+function getNimEmbedder() {
+  return createNimEmbedder({
+    apiKey: process.env.NVIDIA_NIM_API_KEY,
+    model: process.env.NVIDIA_NIM_EMBED_MODEL,
+    apiUrl: process.env.NVIDIA_NIM_EMBED_API_URL,
+  });
+}
 const IGNORED_DIRECTORIES = new Set([
   ".git",
   "dist",
@@ -118,10 +132,22 @@ async function migrateLegacyRepositories() {
 }
 
 // Indexes repositories that were recorded without an index (legacy imports, or
-// rows written before indexing existed). Runs after the window opens so it
-// never delays startup, and the renderer refreshes once it finishes.
+// rows written before indexing existed), then re-indexes any repository that
+// predates chunking so it can be answered semantically. Runs after the window
+// opens so it never delays startup, and the renderer refreshes once it finishes.
 async function backfillRepositoryIndexes(mainWindow) {
-  for (const repository of listUnindexedRepositories()) {
+  const embedder = getNimEmbedder();
+  // Both passes re-index an existing row in place, so they share one loop. The
+  // chunk pass only runs with an embedder: without a key it would re-read every
+  // repository on every launch to produce no chunks at all. It is scoped to the
+  // configured model, so chunks from a model that is no longer configured do
+  // not mask a repository that still needs vectors in the current one.
+  const targets = [
+    ...listUnindexedRepositories(),
+    ...(embedder ? listRepositoriesWithoutChunks(embedder.model) : []),
+  ];
+
+  for (const repository of targets) {
     try {
       await fs.access(repository.localPath);
     } catch {
@@ -141,7 +167,7 @@ async function backfillRepositoryIndexes(mainWindow) {
           url: repository.url,
           addedAt: repository.addedAt,
         },
-        { timeoutMs: INDEX_TIMEOUT_MS },
+        { timeoutMs: INDEX_TIMEOUT_MS, embedder },
       );
     } catch (error) {
       console.error(`Failed to index ${repository.name}:`, error);
@@ -519,7 +545,7 @@ function registerIpcHandlers() {
         localPath,
         mainWindow,
         { externalId: id, name, url: trimmedUrl, addedAt },
-        { timeoutMs: INDEX_TIMEOUT_MS },
+        { timeoutMs: INDEX_TIMEOUT_MS, embedder: getNimEmbedder() },
       );
     } catch (error) {
       // A failed clone or index must not leave a half-written repository folder
@@ -559,8 +585,14 @@ function registerIpcHandlers() {
       readRepositoryReadme(repository.localPath),
     ]);
     // Pull the most relevant indexed source files so answers are grounded in
-    // the code itself, not just the README and file tree.
-    const excerpts = searchRepositoryFiles(repository.id, trimmedQuestion);
+    // the code itself, not just the README and file tree. Retrieval prefers
+    // chunks matched by meaning and falls back to lexical ranking, so a
+    // repository indexed without embeddings is still answerable.
+    const excerpts = await retrieveRepositoryExcerpts(
+      repository.id,
+      trimmedQuestion,
+      { embedder: getNimEmbedder() },
+    );
 
     const answerContext = {
       repository,
@@ -626,7 +658,7 @@ function registerIpcHandlers() {
       repoPath,
       mainWindow,
       {},
-      { timeoutMs: INDEX_TIMEOUT_MS },
+      { timeoutMs: INDEX_TIMEOUT_MS, embedder: getNimEmbedder() },
     );
     return { success: true, ...result };
   });
@@ -645,11 +677,6 @@ function registerIpcHandlers() {
 
   ipcMain.handle("get-ownership", async (_, { repoId, path: filePath }) => {
     return getOwnership(repoId, filePath);
-  });
-
-  ipcMain.handle("query-rag", async (_, { question, repoId }) => {
-    // TODO: call RAGPipeline
-    return { answer: "RAG not yet implemented", sources: [] };
   });
 
   ipcMain.handle("get-repos", async () => {

@@ -4,6 +4,8 @@ const { getDb } = require("../db/schema");
 const { FileTraverser } = require("./FileTraverser");
 const { extractFileSymbols } = require("./SymbolExtractor");
 const { createImportResolver, toPosix } = require("./ImportResolver");
+const { chunkFile, chunkEmbedText } = require("../pipeline/chunker");
+const { encodeVector } = require("../query/vectors");
 
 // Progress is a courtesy to the renderer, not part of the index. If the window
 // is destroyed while a clone is being indexed, send() throws; letting that
@@ -19,7 +21,7 @@ function notifyProgress(mainWindow, payload) {
 
 class IndexerService {
   async indexRepo(repoPath, mainWindow, metadata = {}, options = {}) {
-    const { timeoutMs } = options;
+    const { timeoutMs, embedder } = options;
     // A deadline rather than Promise.race: the loop checks it between files and
     // aborts before the synchronous write transaction, so nothing is committed.
     const deadline = timeoutMs == null ? Infinity : Date.now() + timeoutMs;
@@ -80,6 +82,60 @@ class IndexerService {
       }
     }
 
+    // Chunk and embed while the contents are still in hand. Like symbol
+    // extraction this happens before the write transaction, because embedding
+    // is a network round trip and better-sqlite3 transactions are synchronous.
+    // Embedding is an enhancement to the index rather than part of it: without
+    // a key, offline, or rate limited, the repository is still fully indexed
+    // and retrieval falls back to the lexical pass.
+    if (embedder) {
+      if (Date.now() >= deadline) {
+        throw new Error(`Indexing timed out after ${timeoutMs}ms.`);
+      }
+
+      for (const record of fileRecords) {
+        record.chunks = chunkFile(record.rawContent);
+      }
+
+      const chunkTexts = [];
+      const chunkTargets = [];
+
+      for (const record of fileRecords) {
+        for (const chunk of record.chunks) {
+          chunkTexts.push(chunkEmbedText(record.path, chunk.content));
+          chunkTargets.push(chunk);
+        }
+      }
+
+      try {
+        const vectors = await embedder.embedPassages(chunkTexts);
+
+        // A short response would shift every later vector onto the wrong chunk,
+        // so a count mismatch is a failed embedding rather than a partial one.
+        if (vectors.length !== chunkTargets.length) {
+          throw new Error(
+            `Embedding returned ${vectors.length} vectors for ${chunkTargets.length} chunks.`,
+          );
+        }
+
+        for (let index = 0; index < chunkTargets.length; index += 1) {
+          chunkTargets[index].embedding = vectors[index];
+        }
+      } catch (error) {
+        console.error(
+          `Failed to embed ${rootPath} for semantic retrieval:`,
+          error,
+        );
+
+        // All or nothing per repository. A half-embedded index would answer
+        // some questions semantically and silently fall back for others, which
+        // looks like a retrieval bug rather than a missing API call.
+        for (const record of fileRecords) {
+          record.chunks = [];
+        }
+      }
+    }
+
     const indexedAt = Date.now();
 
     const upsertRepo = db.prepare(`
@@ -101,6 +157,9 @@ class IndexerService {
       WHERE source_file_id IN (SELECT id FROM files WHERE repo_id = ?)
          OR target_file_id IN (SELECT id FROM files WHERE repo_id = ?)
     `);
+    const deleteChunks = db.prepare(
+      "DELETE FROM chunks WHERE file_id IN (SELECT id FROM files WHERE repo_id = ?)",
+    );
     const deleteFiles = db.prepare("DELETE FROM files WHERE repo_id = ?");
     const insertFile = db.prepare(`
       INSERT INTO files (repo_id, path, abs_path, language, loc, raw_content, indexed_at)
@@ -119,6 +178,10 @@ class IndexerService {
     const insertImport = db.prepare(`
       INSERT INTO imports (source_file_id, target_file_id, import_specifier, import_type, resolved_external)
       VALUES (?, ?, ?, ?, ?)
+    `);
+    const insertChunk = db.prepare(`
+      INSERT INTO chunks (file_id, ordinal, start_line, end_line, content, embedding, dims, model)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `);
     // Resolution only needs the set of indexed paths. Building it once keeps
     // every import lookup a map hit instead of a scan.
@@ -142,6 +205,8 @@ class IndexerService {
 
       deleteSymbols.run(repoId);
       deleteImports.run(repoId, repoId);
+      // Before the files, because chunks are reached through their file row.
+      deleteChunks.run(repoId);
       deleteFiles.run(repoId);
 
       for (const record of fileRecords) {
@@ -163,6 +228,7 @@ class IndexerService {
       );
       let symbolCount = 0;
       let importCount = 0;
+      let chunkCount = 0;
 
       for (const record of fileRecords) {
         const fileId = fileIdByPath.get(toPosix(record.path));
@@ -201,11 +267,33 @@ class IndexerService {
           );
           importCount += 1;
         }
+
+        // Empty when no embedder was supplied or embedding failed, which
+        // leaves the repository readable but without semantic retrieval.
+        for (const chunk of record.chunks ?? []) {
+          insertChunk.run(
+            fileId,
+            chunk.ordinal,
+            chunk.startLine,
+            chunk.endLine,
+            chunk.content,
+            encodeVector(chunk.embedding),
+            chunk.embedding.length,
+            embedder.model,
+          );
+          chunkCount += 1;
+        }
       }
 
       updateRepo.run(fileRecords.length, indexedAt, repoId);
 
-      return { repoId, fileCount: fileRecords.length, symbolCount, importCount };
+      return {
+        repoId,
+        fileCount: fileRecords.length,
+        symbolCount,
+        importCount,
+        chunkCount,
+      };
     });
 
     // Last chance to abort: the file loop can overrun the deadline on its final

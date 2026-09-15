@@ -29,6 +29,19 @@ function listRepositories() {
   return rows.map(mapRepositoryRow);
 }
 
+// The metadata the indexer needs to re-index an existing row in place instead
+// of duplicating it.
+function mapIndexTargetRow(row) {
+  return {
+    id: row.external_id ?? String(row.id),
+    name: row.name,
+    localPath: row.root_path,
+    url: row.url ?? null,
+    addedAt: row.added_at ?? null,
+    externalId: row.external_id ?? null,
+  };
+}
+
 // Repositories whose index never completed: rows imported from the legacy
 // JSON store, or written before indexing existed. The startup backfill walks
 // these and hands the metadata back to the indexer so the existing row is
@@ -40,14 +53,41 @@ function listUnindexedRepositories() {
     )
     .all();
 
-  return rows.map((row) => ({
-    id: row.external_id ?? String(row.id),
-    name: row.name,
-    localPath: row.root_path,
-    url: row.url ?? null,
-    addedAt: row.added_at ?? null,
-    externalId: row.external_id ?? null,
-  }));
+  return rows.map(mapIndexTargetRow);
+}
+
+// Repositories indexed before chunking existed: they have files but no chunks,
+// so semantic retrieval would silently fall back to lexical for them. Only
+// worth reporting when an embedder is configured, which the caller decides.
+//
+// `model` is the configured embed model, and only its chunks count as already
+// present. A chunk left behind by a model that is no longer configured lives in
+// a different vector space that `semanticSearch` filters out, so such a
+// repository still needs the backfill even though its `chunks` table is not
+// empty.
+//
+// The `EXISTS a file` guard keeps a repository whose last index found no files
+// out of the backfill, since re-indexing it would produce no chunks again. A
+// repository whose files exist but produced no chunks is retried on the next
+// launch: an embed that failed (offline, rate limited) should be retried, and a
+// repository with nothing worth chunking costs one re-read and no request.
+function listRepositoriesWithoutChunks(model) {
+  const rows = getDb()
+    .prepare(
+      `SELECT ${REPOSITORY_COLUMNS} FROM repos
+        WHERE indexed_at IS NOT NULL
+          AND EXISTS (SELECT 1 FROM files f WHERE f.repo_id = repos.id)
+          AND NOT EXISTS (
+            SELECT 1 FROM chunks c
+             JOIN files f ON f.id = c.file_id
+            WHERE f.repo_id = repos.id
+              AND c.model = ?
+          )
+        ORDER BY id`,
+    )
+    .all(model);
+
+  return rows.map(mapIndexTargetRow);
 }
 
 function findRepository(repositoryId) {
@@ -133,6 +173,7 @@ module.exports = {
   mapRepositoryRow,
   listRepositories,
   listUnindexedRepositories,
+  listRepositoriesWithoutChunks,
   findRepository,
   legacyRepositoriesImported,
   importLegacyRepositories,
