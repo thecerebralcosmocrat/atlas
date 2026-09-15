@@ -160,6 +160,51 @@ test("throws when a response item carries no vector", async () => {
   }
 });
 
+test("throws when a vector entry is not a finite number", async () => {
+  // An entry that is present but not a number encodes to a NaN BLOB: the right
+  // count and the right shape, but a vector no score can ever be computed from.
+  const entries = [
+    ["a", "b"],
+    [[1, 2], [3, 4]],
+    [1, "x"],
+    [1, NaN],
+    [1, Infinity],
+    [1, null],
+    [1, undefined],
+  ];
+
+  for (const embedding of entries) {
+    const { impl } = recordingFetch({
+      onRequest: () => ({ ok: true, json: async () => ({ data: [{ index: 0, embedding }] }) }),
+    });
+
+    await assert.rejects(
+      () =>
+        createNimEmbedder({ apiKey: "k", fetchImpl: impl }).embedPassages(["a"]),
+      /item 0 has a non-numeric entry/,
+      `expected ${JSON.stringify(embedding)} to be rejected`,
+    );
+  }
+});
+
+test("accepts a dense numeric vector, including zeros", async () => {
+  // The non-numeric check must not turn a legitimate all-zero or single-axis
+  // vector into a failure: 0 is a finite number, not a missing entry.
+  const { impl } = recordingFetch({
+    onRequest: () => ({
+      ok: true,
+      json: async () => ({ data: [{ index: 0, embedding: [0, -1.5, 0.25] }] }),
+    }),
+  });
+
+  const vectors = await createNimEmbedder({
+    apiKey: "k",
+    fetchImpl: impl,
+  }).embedPassages(["a"]);
+
+  assert.deepStrictEqual(vectors, [[0, -1.5, 0.25]]);
+});
+
 test("reports the service's status when a request fails", async () => {
   const { impl } = recordingFetch({
     onRequest: () => ({

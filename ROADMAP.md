@@ -155,9 +155,11 @@ vectors to compare against.
   query. It returns null without a key, takes an injectable `fetchImpl` so tests
   never hit the network, and rejects any response it cannot line up with its
   input: a short one would shift every later vector onto the wrong chunk, and a
-  full-length one whose items carry no vector would be stored as `undefined`
-  and only fail later, inside the indexer's write transaction, where the whole
-  index would be lost instead of one vector.
+  full-length one whose items carry no vector, or carry entries that are not
+  finite numbers, would be stored as `undefined` or a BLOB of NaNs and only
+  fail later — inside the indexer's write transaction for the missing vector,
+  and never at all for the NaNs, which spend storage on a vector no score can
+  ever be computed from.
 - Storage and scoring: `electron/query/vectors.js` — `encodeVector`/
   `decodeVector` for the BLOB (copying the bytes out first, since SQLite can
   hand back a Buffer at any offset and a `Float32Array` view needs 4-byte

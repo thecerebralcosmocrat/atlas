@@ -84,6 +84,18 @@ function createNimEmbedder({
           );
         }
 
+        // A present vector is not yet a usable one: `["a", "b"]` and a nested
+        // array both survive JSON and the array check, but they encode to a
+        // BLOB of NaNs, which is storage spent on vectors that can never score.
+        // Retrieval already ignores such a vector, so catching it here turns a
+        // silent data-quality problem into the same non-fatal failure as a
+        // missing vector.
+        if (item.embedding.some((value) => !Number.isFinite(value))) {
+          throw new Error(
+            `NIM embedding response item ${position} has a non-numeric entry.`,
+          );
+        }
+
         vectors.push(item.embedding);
       }
     }
