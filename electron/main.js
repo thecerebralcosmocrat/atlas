@@ -27,7 +27,7 @@ const {
 
 const isDev = process.env.NODE_ENV === "development";
 const DEFAULT_NIM_API_URL = "https://integrate.api.nvidia.com/v1/chat/completions";
-const DEFAULT_NIM_MODEL = "deepseek-ai/deepseek-v4-pro";
+const DEFAULT_NIM_MODEL = "deepseek-ai/deepseek-v4.1-flash";
 
 // Embeddings use the same NIM account as the answers. Built per use rather than
 // cached so it always sees the environment loadLocalEnv has loaded, and it
