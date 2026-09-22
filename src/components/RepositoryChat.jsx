@@ -90,7 +90,7 @@ export default function RepositoryChat({ repository, onAskRepository }) {
   };
 
   return (
-    <section className="flex h-full min-h-[420px] flex-col border border-border">
+    <section className="flex h-full min-h-0 min-w-0 flex-col border border-border">
       <div className="border-b border-border px-4 py-3">
         <h2 className="text-sm font-medium text-foreground">Ask</h2>
         <p className="mt-1 text-xs text-muted-foreground">

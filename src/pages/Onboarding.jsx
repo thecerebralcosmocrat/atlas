@@ -61,7 +61,7 @@ export default function Onboarding({ onAddRepository }) {
   }, []);
 
   return (
-    <div className="flex-1 overflow-y-auto px-6 py-10">
+    <div className="min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden px-6 py-10">
       <div className="mx-auto flex min-h-full w-full max-w-[720px] flex-col items-center justify-center">
         <div className="mb-8 text-center">
           <h1 className="mb-2 text-3xl font-semibold tracking-[-0.055em] text-foreground">

@@ -10,11 +10,13 @@ export default function FileTree({ items, depth = 0 }) {
       {items.map((item) => (
         <div key={`${depth}-${item.name}`}>
           <div
-            className="px-2 py-1.5 text-sm text-muted-foreground"
+            className="flex min-w-0 items-center gap-2 px-2 py-1.5 text-sm text-muted-foreground"
             style={{ paddingInlineStart: `${8 + depth * 16}px` }}
           >
-            <span className="text-foreground">{item.name}</span>
-            <span className="ms-2 text-[11px] uppercase tracking-wide">
+            <span className="truncate text-foreground" title={item.name}>
+              {item.name}
+            </span>
+            <span className="shrink-0 text-[11px] uppercase tracking-wide">
               {item.type}
             </span>
           </div>

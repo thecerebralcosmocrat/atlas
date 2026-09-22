@@ -100,7 +100,7 @@ export default function App() {
   return (
     <TooltipProvider>
       <Router>
-        <div className="flex h-screen w-screen flex-col overflow-hidden bg-background font-sans text-foreground antialiased selection:bg-accent selection:text-foreground">
+        <div className="flex h-full w-full flex-col overflow-hidden bg-background font-sans text-foreground antialiased selection:bg-accent selection:text-foreground">
           {/* Custom titlebar drag region */}
           <div
             className="shrink-0 w-full h-8 border-b border-sidebar-border bg-sidebar"

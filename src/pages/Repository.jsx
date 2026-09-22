@@ -84,7 +84,7 @@ export default function Repository({
   const setTab = (next) => setSearchParams({ tab: next }, { replace: true });
 
   return (
-    <div className="flex flex-1 flex-col overflow-hidden">
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
       <header className="shrink-0 px-4 pb-3 pt-4">
         <p className="text-xs font-medium uppercase tracking-widest text-muted-foreground">
           Repository
@@ -102,8 +102,8 @@ export default function Repository({
 
       <RepoNav active={tab} onChange={setTab} />
 
-      <div className="flex-1 overflow-y-auto p-4">
-        <div>
+      <div className="min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden p-4">
+        <div className="min-w-0">
           {tab === "overview" && (
             <Overview
               repository={repository}
@@ -131,7 +131,7 @@ export default function Repository({
             <CodeGraphPanel key={repository.id} repository={repository} />
           )}
           {tab === "analyze" && (
-            <div className="grid gap-4 lg:grid-cols-2">
+            <div className="grid min-w-0 gap-4 lg:grid-cols-2 [&>*]:min-w-0">
               <ImpactPanel key={repository.id} repository={repository} />
               <OwnershipPanel key={repository.id} repository={repository} />
             </div>
