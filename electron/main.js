@@ -27,7 +27,7 @@ const {
 
 const isDev = process.env.NODE_ENV === "development";
 const DEFAULT_NIM_API_URL = "https://integrate.api.nvidia.com/v1/chat/completions";
-const DEFAULT_NIM_MODEL = "deepseek-ai/deepseek-v4.1-flash";
+const DEFAULT_NIM_MODEL = "nvidia/nemotron-3-super-120b-a12b";
 
 // Embeddings use the same NIM account as the answers. Built per use rather than
 // cached so it always sees the environment loadLocalEnv has loaded, and it
@@ -179,6 +179,10 @@ async function backfillRepositoryIndexes(mainWindow) {
 
 const CLONE_TIMEOUT_MS = 5 * 60 * 1000;
 const INDEX_TIMEOUT_MS = 10 * 60 * 1000;
+// A chat request that never answers must not hold the ask handler open, or the
+// renderer sits on "Thinking…" forever. Past this it falls back to the local
+// answer path.
+const CHAT_TIMEOUT_MS = 60 * 1000;
 const CLONE_URL_SCHEME = /^[a-z][a-z0-9+.-]*:\/\//i;
 const CLONE_SCP_LIKE = /^[^\s/@]+@[^\s/:]+:[^\s]+$/;
 const WINDOWS_ABSOLUTE_PATH = /^[a-z]:[\\/]/i;
@@ -416,37 +420,47 @@ async function answerWithNim(repositoryContext, question) {
     return null;
   }
 
-  const response = await fetch(apiUrl, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model,
-      temperature: 0.2,
-      max_tokens: 900,
-      messages: [
-        {
-          role: "system",
-          content:
-            "You are Atlas, a senior codebase onboarding assistant. Answer using only the repository context provided, including the retrieved code excerpts. Be concise, practical, and specific. Cite the exact file paths you relied on. When useful, suggest files, folders, or package scripts to inspect. If the context is insufficient, say what is missing instead of guessing.",
-        },
-        {
-          role: "user",
-          content: `Repository context:\n${repositoryContext}\n\nQuestion: ${question}`,
-        },
-      ],
-    }),
-  });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), CHAT_TIMEOUT_MS);
 
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`NVIDIA NIM request failed: ${response.status} ${errorText}`);
+  try {
+    const response = await fetch(apiUrl, {
+      method: "POST",
+      signal: controller.signal,
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model,
+        temperature: 0.2,
+        max_tokens: 900,
+        messages: [
+          {
+            role: "system",
+            content:
+              "You are Atlas, a senior codebase onboarding assistant. Answer using only the repository context provided, including the retrieved code excerpts. Be concise, practical, and specific. Cite the exact file paths you relied on. When useful, suggest files, folders, or package scripts to inspect. If the context is insufficient, say what is missing instead of guessing.",
+          },
+          {
+            role: "user",
+            content: `Repository context:\n${repositoryContext}\n\nQuestion: ${question}`,
+          },
+        ],
+      }),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(
+        `NVIDIA NIM request failed: ${response.status} ${errorText}`,
+      );
+    }
+
+    const payload = await response.json();
+    return payload.choices?.[0]?.message?.content?.trim() || null;
+  } finally {
+    clearTimeout(timeout);
   }
-
-  const payload = await response.json();
-  return payload.choices?.[0]?.message?.content?.trim() || null;
 }
 
 function answerRepositoryQuestion(
