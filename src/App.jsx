@@ -97,6 +97,28 @@ export default function App() {
     return repositoryApi.ask(repositoryId, question);
   };
 
+  const handleDeleteRepository = async (repositoryId) => {
+    if (!repositoryApi) {
+      throw new Error(
+        "Repository deletion is only available in the Electron app.",
+      );
+    }
+
+    await repositoryApi.remove(repositoryId);
+
+    const remainingRepositories = repositories.filter(
+      (repository) => repository.id !== repositoryId,
+    );
+    setRepositories(remainingRepositories);
+
+    // The deleted repository may be the one on screen; fall back to another so
+    // the page keeps showing a repository instead of an empty selection.
+    if (selectedRepositoryId === repositoryId) {
+      setSelectedRepositoryId(remainingRepositories[0]?.id ?? null);
+      setSelectedDetails(null);
+    }
+  };
+
   return (
     <TooltipProvider>
       <Router>
@@ -112,6 +134,7 @@ export default function App() {
               repositories={repositories}
               selectedRepositoryId={selectedRepositoryId}
               onSelectRepository={setSelectedRepositoryId}
+              onRequestDeleteRepository={handleDeleteRepository}
             />
 
             <main className="flex flex-1 flex-col overflow-hidden bg-background">

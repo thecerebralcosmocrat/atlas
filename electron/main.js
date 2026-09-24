@@ -8,6 +8,7 @@ const {
   listUnindexedRepositories,
   listRepositoriesWithoutChunks,
   findRepository,
+  deleteRepository,
   legacyRepositoriesImported,
   importLegacyRepositories,
 } = require("./db/repositories");
@@ -103,6 +104,19 @@ async function ensureAtlasStorage() {
   return { atlasRoot, repositoriesRoot };
 }
 
+// True only for a path inside the folder the app clones into. Imports and legacy
+// rows can point at a checkout the user already had, and Atlas must never
+// delete or rewrite one of those.
+function isManagedRepositoryPath(localPath) {
+  if (!localPath) return false;
+
+  const { repositoriesRoot } = getAtlasPaths();
+  const clonePath = path.resolve(localPath);
+  const managedRoot = path.resolve(repositoriesRoot) + path.sep;
+
+  return clonePath.startsWith(managedRoot);
+}
+
 async function readLegacyRepositories() {
   const { storePath } = getAtlasPaths();
 
@@ -131,6 +145,21 @@ async function migrateLegacyRepositories() {
   }
 }
 
+// Paths the user deleted while the startup backfill was still running. The
+// backfill picks its targets once, and the indexer upserts the repository row,
+// so a deletion landing mid-backfill would otherwise be undone when the
+// in-flight index commits: the repository would reappear in the sidebar, now
+// pointing at a folder that has already been removed.
+const deletedRepositoryPaths = new Set();
+
+function markRepositoryDeleted(localPath) {
+  deletedRepositoryPaths.add(path.resolve(localPath));
+}
+
+function wasRepositoryDeleted(localPath) {
+  return deletedRepositoryPaths.has(path.resolve(localPath));
+}
+
 // Indexes repositories that were recorded without an index (legacy imports, or
 // rows written before indexing existed), then re-indexes any repository that
 // predates chunking so it can be answered semantically. Runs after the window
@@ -148,6 +177,8 @@ async function backfillRepositoryIndexes(mainWindow) {
   ];
 
   for (const repository of targets) {
+    if (wasRepositoryDeleted(repository.localPath)) continue;
+
     try {
       await fs.access(repository.localPath);
     } catch {
@@ -171,6 +202,15 @@ async function backfillRepositoryIndexes(mainWindow) {
       );
     } catch (error) {
       console.error(`Failed to index ${repository.name}:`, error);
+    }
+
+    // The index rewrites the repository row as part of indexing. A deletion
+    // that arrived while this one was in flight has just been overwritten, so
+    // remove it again rather than handing the user back a repository they
+    // deleted. Both are synchronous transactions on one connection, so the
+    // index and the delete cannot interleave — only one can be last.
+    if (wasRepositoryDeleted(repository.localPath)) {
+      deleteRepository(repository.id);
     }
   }
 
@@ -569,6 +609,45 @@ function registerIpcHandlers() {
     }
 
     return inspectRepository(findRepository(id));
+  });
+
+  ipcMain.handle("repositories:remove", async (event, repositoryId) => {
+    const repository = findRepository(repositoryId);
+
+    if (!repository) {
+      throw new Error("Repository not found.");
+    }
+
+    // Record the deletion before purging the row. Both calls are synchronous,
+    // so nothing can interleave between them; a backfill index that commits
+    // after this point sees the mark and removes the row it just rewrote.
+    markRepositoryDeleted(repository.localPath);
+
+    if (deleteRepository(repositoryId) === 0) {
+      throw new Error("Repository not found.");
+    }
+
+    // Only delete the clone when it lives inside the folder the app manages.
+    // Imports and legacy rows can point at a checkout the user already had, and
+    // removing the repository must not delete the user's own working copy.
+    if (isManagedRepositoryPath(repository.localPath)) {
+      await fs
+        .rm(path.resolve(repository.localPath), { recursive: true, force: true })
+        .catch((error) => {
+          // The row is already gone, so the repository is deleted from the user's
+          // point of view; an orphaned folder is not worth failing the request.
+          console.warn(
+            `Failed to delete cloned folder ${repository.localPath}:`,
+            error,
+          );
+        });
+    }
+
+    BrowserWindow.fromWebContents(event.sender)?.webContents?.send(
+      "repositories:changed",
+    );
+
+    return { id: repository.id };
   });
 
   ipcMain.handle("repositories:inspect", async (_, repositoryId) => {

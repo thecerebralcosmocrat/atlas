@@ -8,6 +8,7 @@ const {
   listUnindexedRepositories,
   listRepositoriesWithoutChunks,
   findRepository,
+  deleteRepository,
   legacyRepositoriesImported,
   importLegacyRepositories,
 } = require("../electron/db/repositories");
@@ -187,6 +188,94 @@ test("re-lists a repository whose chunks came from a different model", () => {
     ["old-model"],
   );
   assert.deepStrictEqual(listRepositoriesWithoutChunks(EMBED_MODEL), []);
+});
+
+// Seeds an indexed repository with one file plus the rows derived from it, so
+// a delete can be checked against every table a repository owns.
+function insertDerivedRows(db, name) {
+  const repoId = insertIndexedRepo(db, name, { withChunk: true });
+  const fileId = db
+    .prepare("SELECT id FROM files WHERE repo_id = ?")
+    .get(repoId).id;
+
+  db.prepare(
+    `INSERT INTO symbols (file_id, name, kind, signature, line_start, line_end, is_exported)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+  ).run(fileId, "a", "variable", "let a", 1, 1, 0);
+
+  return { repoId, fileId };
+}
+
+test("deletes a repository and every row derived from it", () => {
+  const db = freshDb();
+  const doomed = insertDerivedRows(db, "doomed");
+  const kept = insertDerivedRows(db, "kept");
+  // An import crossing repos must go when either end is deleted, since it
+  // references file ids that no longer exist.
+  db.prepare(
+    `INSERT INTO imports (source_file_id, target_file_id, import_specifier, import_type, resolved_external)
+     VALUES (?, ?, ?, ?, ?)`,
+  ).run(doomed.fileId, kept.fileId, "./kept", "esm", 0);
+
+  assert.strictEqual(deleteRepository(doomed.repoId), 1);
+
+  assert.deepStrictEqual(
+    listRepositories().map((repository) => repository.name),
+    ["kept"],
+  );
+  assert.strictEqual(
+    db.prepare("SELECT COUNT(*) AS n FROM files WHERE repo_id = ?").get(
+      doomed.repoId,
+    ).n,
+    0,
+  );
+  assert.strictEqual(
+    db.prepare("SELECT COUNT(*) AS n FROM symbols WHERE file_id = ?").get(
+      doomed.fileId,
+    ).n,
+    0,
+  );
+  assert.strictEqual(
+    db.prepare("SELECT COUNT(*) AS n FROM chunks WHERE file_id = ?").get(
+      doomed.fileId,
+    ).n,
+    0,
+  );
+  assert.strictEqual(db.prepare("SELECT COUNT(*) AS n FROM imports").get().n, 0);
+
+  // The untouched repository keeps everything it had.
+  assert.strictEqual(
+    db.prepare("SELECT COUNT(*) AS n FROM files WHERE repo_id = ?").get(
+      kept.repoId,
+    ).n,
+    1,
+  );
+  assert.strictEqual(
+    db.prepare("SELECT COUNT(*) AS n FROM chunks WHERE file_id = ?").get(
+      kept.fileId,
+    ).n,
+    1,
+  );
+});
+
+test("deletes a repository addressed by its external id", () => {
+  const db = freshDb();
+  db.prepare(
+    "INSERT INTO repos (name, root_path, external_id) VALUES (?, ?, ?)",
+  ).run("atlas", "C:/data/repos/atlas-1", "atlas-1");
+
+  assert.strictEqual(deleteRepository("atlas-1"), 1);
+  assert.deepStrictEqual(listRepositories(), []);
+});
+
+test("deleting an unknown repository removes nothing", () => {
+  const db = freshDb();
+  insertDerivedRows(db, "survivor");
+
+  assert.strictEqual(deleteRepository("missing"), 0);
+  assert.strictEqual(deleteRepository(undefined), 0);
+  assert.strictEqual(deleteRepository(null), 0);
+  assert.strictEqual(listRepositories().length, 1);
 });
 
 test("imports a legacy JSON repository and records the marker", () => {

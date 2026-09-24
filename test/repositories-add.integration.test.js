@@ -2,115 +2,12 @@ const test = require("node:test");
 const assert = require("node:assert");
 const fs = require("node:fs");
 const path = require("node:path");
-const { execFileSync } = require("node:child_process");
 
 const { initializeDatabase } = require("../electron/db/schema");
 const { makeTempDir, cleanupTempDirs } = require("./helpers/tempDirs");
+const { loadMain, makeGitFixtureRepo } = require("./helpers/loadMain");
 
 test.after(cleanupTempDirs);
-
-// Loads electron/main.js with a stubbed `electron` module so the IPC wiring can
-// be exercised without a real Electron app/BrowserWindow. Returns the captured
-// handlers plus the fake window that stands in for the renderer. Pass an
-// `indexerClass` to replace the real IndexerService (used to make indexing
-// fail on demand).
-async function loadMain({ userData, indexerClass }) {
-  const handlers = new Map();
-  const sentEvents = [];
-
-  const fakeWindow = {
-    removeMenu() {},
-    loadURL() {},
-    loadFile() {},
-    webContents: {
-      send: (channel, payload) => sentEvents.push({ channel, payload }),
-    },
-  };
-
-  function FakeBrowserWindow() {
-    return fakeWindow;
-  }
-  FakeBrowserWindow.fromWebContents = () => fakeWindow;
-
-  const fakeElectron = {
-    app: {
-      getPath: () => userData,
-      whenReady: () => Promise.resolve(),
-      on: () => {},
-      quit: () => {},
-    },
-    BrowserWindow: FakeBrowserWindow,
-    ipcMain: { handle: (channel, handler) => handlers.set(channel, handler) },
-  };
-
-  const electronId = require.resolve("electron");
-  const previousElectron = require.cache[electronId];
-  require.cache[electronId] = {
-    id: electronId,
-    filename: electronId,
-    loaded: true,
-    exports: fakeElectron,
-  };
-  const mainId = require.resolve("../electron/main");
-  const previousMain = require.cache[mainId];
-  const indexerId = require.resolve("../electron/indexer/IndexerService");
-  const previousIndexer = require.cache[indexerId];
-
-  if (indexerClass) {
-    require.cache[indexerId] = {
-      id: indexerId,
-      filename: indexerId,
-      loaded: true,
-      exports: { IndexerService: indexerClass },
-    };
-  }
-
-  try {
-    require(mainId);
-  } finally {
-    if (previousElectron) require.cache[electronId] = previousElectron;
-    else delete require.cache[electronId];
-
-    if (previousIndexer) require.cache[indexerId] = previousIndexer;
-    else delete require.cache[indexerId];
-
-    if (previousMain) require.cache[mainId] = previousMain;
-    else delete require.cache[mainId];
-  }
-
-  // app.whenReady().then(...) registers handlers on a later microtask/tick.
-  const deadline = Date.now() + 5000;
-  while (!handlers.has("repositories:add") && Date.now() < deadline) {
-    await new Promise((resolve) => setTimeout(resolve, 5));
-  }
-
-  return { handlers, sentEvents };
-}
-
-function makeGitFixtureRepo(files = null) {
-  const root = makeTempDir("atlas-gitfixture-");
-  const entries = files ?? {
-    "index.js": "const a = 1;\n",
-    "src/app.py": "print('hi')\n",
-  };
-
-  for (const [relativePath, contents] of Object.entries(entries)) {
-    const target = path.join(root, relativePath);
-
-    fs.mkdirSync(path.dirname(target), { recursive: true });
-    fs.writeFileSync(target, contents);
-  }
-
-  const git = (args) =>
-    execFileSync("git", args, { cwd: root, stdio: "ignore" });
-  git(["init"]);
-  git(["config", "user.email", "test@example.com"]);
-  git(["config", "user.name", "Test"]);
-  git(["add", "."]);
-  git(["commit", "-m", "init"]);
-
-  return root;
-}
 
 test("repositories:add clones, indexes, and reports progress before persisting", async () => {
   const userData = makeTempDir("atlas-userdata-");
@@ -338,6 +235,79 @@ test("repositories:ask grounds its answer in indexed file content", async () => 
   }
 });
 
+test("repositories:remove purges the database, deletes the clone, and notifies the renderer", async () => {
+  const userData = makeTempDir("atlas-userdata-");
+  const repo = makeGitFixtureRepo();
+  const repoUrl = `file:///${repo.replace(/\\/g, "/")}`;
+  const { handlers, sentEvents } = await loadMain({ userData });
+
+  const added = await handlers.get("repositories:add")({ sender: {} }, repoUrl);
+  const localPath = added.localPath;
+  assert.ok(fs.existsSync(localPath), "clone must exist before removal");
+
+  const removed = await handlers.get("repositories:remove")(
+    { sender: {} },
+    added.id,
+  );
+  assert.strictEqual(removed.id, added.id);
+
+  // Gone from the list the sidebar reads...
+  assert.deepStrictEqual(
+    await handlers.get("repositories:list")({ sender: {} }),
+    [],
+  );
+
+  // ...its indexed rows are gone too...
+  const dbPath = path.join(userData, "atlas-data", "atlas.db");
+  const db = initializeDatabase(dbPath);
+  assert.strictEqual(db.prepare("SELECT COUNT(*) AS n FROM repos").get().n, 0);
+  assert.strictEqual(db.prepare("SELECT COUNT(*) AS n FROM files").get().n, 0);
+
+  // ...and the cloned folder is off disk.
+  assert.strictEqual(fs.existsSync(localPath), false);
+
+  assert.ok(
+    sentEvents.some((event) => event.channel === "repositories:changed"),
+    "renderer must be told to refresh after a removal",
+  );
+});
+
+test("repositories:remove keeps a checkout that lives outside the app's repository folder", async () => {
+  const userData = makeTempDir("atlas-userdata-");
+  const repo = makeGitFixtureRepo();
+  const dbPath = path.join(userData, "atlas-data", "atlas.db");
+  fs.mkdirSync(path.dirname(dbPath), { recursive: true });
+
+  // A legacy/imported row points at a checkout the user already had. Removing
+  // the repository must not delete that folder.
+  initializeDatabase(dbPath)
+    .prepare(
+      `INSERT INTO repos (name, root_path, url, added_at, external_id, indexed_at, file_count)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run("legacy", repo, null, null, "legacy-1", 123, 0);
+
+  const { handlers } = await loadMain({ userData });
+
+  await handlers.get("repositories:remove")({ sender: {} }, "legacy-1");
+
+  assert.deepStrictEqual(
+    await handlers.get("repositories:list")({ sender: {} }),
+    [],
+  );
+  assert.ok(fs.existsSync(repo), "the user's own checkout must survive");
+});
+
+test("repositories:remove rejects an unknown repository", async () => {
+  const userData = makeTempDir("atlas-userdata-");
+  const { handlers } = await loadMain({ userData });
+
+  await assert.rejects(
+    () => handlers.get("repositories:remove")({ sender: {} }, "missing"),
+    { message: /not found/i },
+  );
+});
+
 test("repositories:ask says so when a repository has nothing indexed", async () => {
   const userData = makeTempDir("atlas-userdata-");
   const repo = makeGitFixtureRepo({
@@ -356,5 +326,104 @@ test("repositories:ask says so when a repository has nothing indexed", async () 
   );
 
   assert.match(answer, /not been indexed yet/i);
+});
+
+test("a deletion during the startup backfill is not undone by the in-flight index", async () => {
+  const userData = makeTempDir("atlas-userdata-");
+  const repo = makeGitFixtureRepo();
+  const dbPath = path.join(userData, "atlas-data", "atlas.db");
+  fs.mkdirSync(path.dirname(dbPath), { recursive: true });
+
+  // Seed an unindexed row so the startup backfill selects it as a target.
+  initializeDatabase(dbPath)
+    .prepare(
+      `INSERT INTO repos (name, root_path, url, added_at, external_id)
+       VALUES (?, ?, ?, ?, ?)`,
+    )
+    .run(
+      "legacy-name",
+      repo,
+      "https://example.com/legacy.git",
+      "2025-01-01T00:00:00.000Z",
+      "legacy-race",
+    );
+
+  let markIndexStarted;
+  const indexStarted = new Promise((resolve) => {
+    markIndexStarted = resolve;
+  });
+  let releaseIndex;
+  const indexGate = new Promise((resolve) => {
+    releaseIndex = resolve;
+  });
+  let didUpsert = false;
+
+  // Blocks inside indexRepo so a removal can land mid-index, then rewrites the
+  // repository row exactly as the real indexer's upsert does — which is what
+  // would resurrect a repository deleted while the index was in flight.
+  class BlockingIndexer {
+    async indexRepo(localPath, _window, repository) {
+      markIndexStarted();
+      await indexGate;
+      initializeDatabase(dbPath)
+        .prepare(
+          `INSERT INTO repos (name, root_path, url, added_at, external_id, indexed_at, file_count)
+           VALUES (?, ?, ?, ?, ?, 123, 2)
+           ON CONFLICT(root_path) DO UPDATE SET indexed_at = 123, file_count = 2`,
+        )
+        .run(
+          repository.name,
+          localPath,
+          repository.url,
+          repository.addedAt,
+          repository.externalId,
+        );
+      didUpsert = true;
+    }
+  }
+
+  const { handlers, sentEvents } = await loadMain({
+    userData,
+    indexerClass: BlockingIndexer,
+  });
+
+  await indexStarted;
+
+  // Delete the repository while its index is still running.
+  const removed = await handlers.get("repositories:remove")(
+    { sender: {} },
+    "legacy-race",
+  );
+  assert.strictEqual(removed.id, "legacy-race");
+  assert.deepStrictEqual(
+    await handlers.get("repositories:list")({ sender: {} }),
+    [],
+  );
+  const changedAfterRemove = sentEvents.filter(
+    (event) => event.channel === "repositories:changed",
+  ).length;
+
+  // Let the in-flight index commit its row rewrite, then wait for the backfill
+  // to finish so its cleanup (if any) has run.
+  releaseIndex();
+  const deadline = Date.now() + 5000;
+  while (
+    Date.now() < deadline &&
+    sentEvents.filter((event) => event.channel === "repositories:changed")
+      .length <= changedAfterRemove
+  ) {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+
+  assert.ok(didUpsert, "the in-flight index must have rewritten the row");
+  assert.strictEqual(
+    initializeDatabase(dbPath).prepare("SELECT COUNT(*) AS n FROM repos").get().n,
+    0,
+    "the deleted repository must not reappear once the in-flight index commits",
+  );
+  assert.deepStrictEqual(
+    await handlers.get("repositories:list")({ sender: {} }),
+    [],
+  );
 });
 

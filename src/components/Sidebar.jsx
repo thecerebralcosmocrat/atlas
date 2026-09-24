@@ -1,5 +1,23 @@
 import { useState } from "react";
-import { Check, ChevronsUpDown, GitBranch, Layers, Settings } from "lucide-react";
+import {
+  Check,
+  ChevronsUpDown,
+  Ellipsis,
+  GitBranch,
+  Layers,
+  Settings,
+  Trash2,
+} from "lucide-react";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -37,10 +55,129 @@ function getRepositoryDescription(repository) {
   }
 }
 
+function RepositoryRow({
+  repository,
+  active,
+  onSelect,
+  onRequestDeleteRepository,
+}) {
+  const [isConfirmOpen, setIsConfirmOpen] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState(null);
+
+  const handleConfirmDelete = async (event) => {
+    // The action is a dialog close button by default; hold it open until the
+    // main process confirms, so a failure can be shown in place.
+    event.preventDefault();
+    setIsDeleting(true);
+    setDeleteError(null);
+
+    try {
+      await onRequestDeleteRepository(repository.id);
+      setIsConfirmOpen(false);
+    } catch (error) {
+      setDeleteError(error.message || "Could not delete this repository.");
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
+  return (
+    <div
+      className={cn(
+        "group/repo flex min-h-12 items-stretch overflow-hidden rounded-none transition-colors",
+        active
+          ? "bg-sidebar-accent text-sidebar-accent-foreground"
+          : "text-muted-foreground hover:bg-sidebar-accent/70 hover:text-sidebar-foreground",
+      )}
+    >
+      <button
+        type="button"
+        onClick={onSelect}
+        aria-current={active ? "page" : undefined}
+        className="flex min-w-0 flex-1 items-center px-3 py-2 text-start focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-sidebar-ring"
+      >
+        <span className="min-w-0">
+          <span className="block truncate text-sm font-medium">
+            {repository.name}
+          </span>
+          <span className="block truncate text-[11px] text-muted-foreground">
+            {getRepositoryDescription(repository)}
+          </span>
+        </span>
+      </button>
+
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <button
+            type="button"
+            aria-label={`Actions for ${repository.name}`}
+            className="flex w-9 flex-shrink-0 items-center justify-center text-muted-foreground opacity-0 transition-opacity hover:bg-sidebar-accent hover:text-sidebar-foreground focus-visible:opacity-100 focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-sidebar-ring group-hover/repo:opacity-100 data-[state=open]:opacity-100"
+          >
+            <Ellipsis className="size-4" />
+          </button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="min-w-44">
+          <DropdownMenuItem
+            variant="destructive"
+            onSelect={() =>
+              // Let the menu finish closing before the dialog opens, otherwise
+              // the menu's focus restoration steals focus back from it.
+              window.setTimeout(() => setIsConfirmOpen(true), 0)
+            }
+          >
+            <Trash2 />
+            Delete repository
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+
+      <AlertDialog
+        open={isConfirmOpen}
+        onOpenChange={(open) => {
+          if (isDeleting) return;
+          setIsConfirmOpen(open);
+
+          if (!open) setDeleteError(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete repository?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This removes {repository.name} and everything indexed from it.
+              Files cloned into Atlas are deleted from disk. This cannot be
+              undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+
+          {deleteError && (
+            <p className="text-xs leading-relaxed text-destructive">
+              {deleteError}
+            </p>
+          )}
+
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              onClick={handleConfirmDelete}
+              disabled={isDeleting}
+            >
+              {isDeleting ? "Deleting…" : "Delete"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </div>
+  );
+}
+
 export default function Sidebar({
   repositories = [],
   selectedRepositoryId,
   onSelectRepository,
+  onRequestDeleteRepository,
 }) {
   const navigate = useNavigate();
   const location = useLocation();
@@ -86,36 +223,18 @@ export default function Sidebar({
               Indexed repositories will appear here.
             </p>
           )}
-          {repositories.map((repository) => {
-            const active = isActiveRepository(repository);
-
-            return (
-              <button
-                key={repository.id}
-                type="button"
-                onClick={() => {
-                  onSelectRepository(repository.id);
-                  navigate("/repo?tab=overview");
-                }}
-                aria-current={active ? "page" : undefined}
-                className={cn(
-                  "flex min-h-12 w-full items-center overflow-hidden rounded-none px-3 py-2 text-start transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sidebar-ring",
-                  active
-                    ? "bg-sidebar-accent text-sidebar-accent-foreground"
-                    : "text-muted-foreground hover:bg-sidebar-accent/70 hover:text-sidebar-foreground",
-                )}
-              >
-                <span className="min-w-0">
-                  <span className="block truncate text-sm font-medium">
-                    {repository.name}
-                  </span>
-                  <span className="block truncate text-[11px] text-muted-foreground">
-                    {getRepositoryDescription(repository)}
-                  </span>
-                </span>
-              </button>
-            );
-          })}
+          {repositories.map((repository) => (
+            <RepositoryRow
+              key={repository.id}
+              repository={repository}
+              active={isActiveRepository(repository)}
+              onSelect={() => {
+                onSelectRepository(repository.id);
+                navigate("/repo?tab=overview");
+              }}
+              onRequestDeleteRepository={onRequestDeleteRepository}
+            />
+          ))}
         </div>
       </ScrollArea>
 

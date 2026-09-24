@@ -112,6 +112,70 @@ function findRepository(repositoryId) {
   return null;
 }
 
+// The numeric primary key behind a caller-visible id, so the cascade deletes
+// below can be keyed on repo_id. Mirrors findRepository's resolution order:
+// external_id first, then the numeric primary key for legacy rows.
+function resolveRepositoryRowId(repositoryId) {
+  if (repositoryId === undefined || repositoryId === null) return null;
+
+  const db = getDb();
+  const byExternalId = db
+    .prepare("SELECT id FROM repos WHERE external_id = ?")
+    .get(String(repositoryId));
+
+  if (byExternalId) return byExternalId.id;
+
+  if (/^\d+$/.test(String(repositoryId))) {
+    const byPrimaryKey = db
+      .prepare("SELECT id FROM repos WHERE id = ?")
+      .get(Number(repositoryId));
+
+    if (byPrimaryKey) return byPrimaryKey.id;
+  }
+
+  return null;
+}
+
+// Removes a repository and everything derived from it. Files, symbols, chunks,
+// and imports are all keyed by file, and nothing cascades in SQLite, so they
+// have to go before the repo row — otherwise deleting the row would leave
+// orphans that a later re-index of the same path would inherit. `imports`
+// references files on both ends, so both sides must be cleared.
+//
+// Returns the number of repository rows removed (0 when the id matches
+// nothing), which the caller uses to distinguish "deleted" from "not found".
+function deleteRepository(repositoryId) {
+  const rowId = resolveRepositoryRowId(repositoryId);
+
+  if (rowId === null) return 0;
+
+  const db = getDb();
+  const deleteSymbols = db.prepare(
+    "DELETE FROM symbols WHERE file_id IN (SELECT id FROM files WHERE repo_id = ?)",
+  );
+  const deleteImports = db.prepare(`
+    DELETE FROM imports
+    WHERE source_file_id IN (SELECT id FROM files WHERE repo_id = ?)
+       OR target_file_id IN (SELECT id FROM files WHERE repo_id = ?)
+  `);
+  const deleteChunks = db.prepare(
+    "DELETE FROM chunks WHERE file_id IN (SELECT id FROM files WHERE repo_id = ?)",
+  );
+  const deleteFiles = db.prepare("DELETE FROM files WHERE repo_id = ?");
+  const deleteRepo = db.prepare("DELETE FROM repos WHERE id = ?");
+
+  const runDelete = db.transaction(() => {
+    deleteSymbols.run(rowId);
+    deleteImports.run(rowId, rowId);
+    deleteChunks.run(rowId);
+    deleteFiles.run(rowId);
+
+    return deleteRepo.run(rowId).changes;
+  });
+
+  return runDelete();
+}
+
 function legacyRepositoriesImported() {
   const row = getDb()
     .prepare("SELECT value FROM meta WHERE key = ?")
@@ -175,6 +239,7 @@ module.exports = {
   listUnindexedRepositories,
   listRepositoriesWithoutChunks,
   findRepository,
+  deleteRepository,
   legacyRepositoriesImported,
   importLegacyRepositories,
 };
