@@ -97,6 +97,33 @@ export default function App() {
     return repositoryApi.ask(repositoryId, question);
   };
 
+  const handleSyncRepository = async (repositoryId) => {
+    if (!repositoryApi) {
+      throw new Error("Repository sync is only available in the Electron app.");
+    }
+
+    const result = await repositoryApi.sync(repositoryId);
+
+    // The main process re-indexes in place; re-reading the list + inspect pulls
+    // the refreshed file count and sync state into the UI.
+    if (result.changed) {
+      setRefreshToken((currentToken) => currentToken + 1);
+    }
+
+    return result;
+  };
+
+  const handleDiscardRepositoryChanges = async (repositoryId) => {
+    if (!repositoryApi) {
+      throw new Error("Repository sync is only available in the Electron app.");
+    }
+
+    const details = await repositoryApi.discardChanges(repositoryId);
+    setRefreshToken((currentToken) => currentToken + 1);
+
+    return details;
+  };
+
   const handleDeleteRepository = async (repositoryId) => {
     if (!repositoryApi) {
       throw new Error(
@@ -152,6 +179,10 @@ export default function App() {
                       selectedDetails={selectedDetails}
                       isInspecting={isInspecting}
                       onAskRepository={handleAskRepository}
+                      onSyncRepository={handleSyncRepository}
+                      onDiscardRepositoryChanges={
+                        handleDiscardRepositoryChanges
+                      }
                     />
                   }
                 />

@@ -101,8 +101,18 @@ function RepositoryRow({
           <span className="block truncate text-sm font-medium">
             {repository.name}
           </span>
-          <span className="block truncate text-[11px] text-muted-foreground">
-            {getRepositoryDescription(repository)}
+          <span className="flex min-w-0 items-center gap-1.5 text-[11px] text-muted-foreground">
+            <span className="min-w-0 truncate">
+              {getRepositoryDescription(repository)}
+            </span>
+            {repository.syncState === "dirty" && (
+              <>
+                <span aria-hidden="true">·</span>
+                <span className="flex-shrink-0 text-destructive">
+                  Local changes
+                </span>
+              </>
+            )}
           </span>
         </span>
       </button>
