@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { ArrowUp } from "lucide-react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 const suggestions = [
   "What does this repo do?",
@@ -25,9 +27,15 @@ function Message({ role, content }) {
       >
         {isUser ? "You" : "Atlas"}
       </div>
-      <div className="mt-1 whitespace-pre-wrap text-sm leading-relaxed text-foreground">
-        {content}
-      </div>
+      {isUser ? (
+        <div className="mt-1 whitespace-pre-wrap text-sm leading-relaxed text-foreground">
+          {content}
+        </div>
+      ) : (
+        <div className="atlas-markdown mt-1 text-sm leading-relaxed text-foreground">
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
+        </div>
+      )}
     </div>
   );
 }
