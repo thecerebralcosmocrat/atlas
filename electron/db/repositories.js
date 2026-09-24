@@ -1,7 +1,7 @@
 const { getDb } = require("./schema");
 
 const REPOSITORY_COLUMNS =
-  "id, name, root_path, url, added_at, external_id, file_count";
+  "id, name, root_path, url, added_at, external_id, file_count, indexed_at, commit_sha, sync_state";
 
 const LEGACY_IMPORTED_KEY = "legacy_repositories_imported";
 
@@ -18,6 +18,9 @@ function mapRepositoryRow(row) {
     localPath: row.root_path,
     addedAt: row.added_at ?? null,
     fileCount: row.file_count ?? 0,
+    indexedAt: row.indexed_at ?? null,
+    commitSha: row.commit_sha ?? null,
+    syncState: row.sync_state ?? null,
   };
 }
 
@@ -30,7 +33,8 @@ function listRepositories() {
 }
 
 // The metadata the indexer needs to re-index an existing row in place instead
-// of duplicating it.
+// of duplicating it. Also carries the sync bookkeeping, so the sync poller can
+// reuse the same query shape as the backfill.
 function mapIndexTargetRow(row) {
   return {
     id: row.external_id ?? String(row.id),
@@ -39,6 +43,8 @@ function mapIndexTargetRow(row) {
     url: row.url ?? null,
     addedAt: row.added_at ?? null,
     externalId: row.external_id ?? null,
+    commitSha: row.commit_sha ?? null,
+    syncState: row.sync_state ?? null,
   };
 }
 
@@ -88,6 +94,34 @@ function listRepositoriesWithoutChunks(model) {
     .all(model);
 
   return rows.map(mapIndexTargetRow);
+}
+
+// Repositories the sync poller can refresh: they came from a remote, and they
+// have been indexed at least once, so there is a known-good state to compare
+// against. Never-indexed rows are left to the startup backfill so the two
+// passes do not both read the same folder.
+function listSyncableRepositories() {
+  const rows = getDb()
+    .prepare(
+      `SELECT ${REPOSITORY_COLUMNS} FROM repos
+        WHERE url IS NOT NULL AND url != '' AND indexed_at IS NOT NULL
+        ORDER BY id`,
+    )
+    .all();
+
+  return rows.map(mapIndexTargetRow);
+}
+
+// Records the commit the clone now matches and whether local edits are holding
+// a remote update back. `syncState` is null when nothing is holding it up.
+function setRepositorySyncState(repositoryId, { commitSha, syncState }) {
+  const rowId = resolveRepositoryRowId(repositoryId);
+
+  if (rowId === null) return 0;
+
+  return getDb()
+    .prepare("UPDATE repos SET commit_sha = ?, sync_state = ? WHERE id = ?")
+    .run(commitSha ?? null, syncState ?? null, rowId).changes;
 }
 
 function findRepository(repositoryId) {
@@ -238,8 +272,10 @@ module.exports = {
   listRepositories,
   listUnindexedRepositories,
   listRepositoriesWithoutChunks,
+  listSyncableRepositories,
   findRepository,
   deleteRepository,
+  setRepositorySyncState,
   legacyRepositoriesImported,
   importLegacyRepositories,
 };

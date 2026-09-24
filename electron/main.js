@@ -7,12 +7,18 @@ const {
   listRepositories,
   listUnindexedRepositories,
   listRepositoriesWithoutChunks,
+  listSyncableRepositories,
   findRepository,
   deleteRepository,
+  setRepositorySyncState,
   legacyRepositoriesImported,
   importLegacyRepositories,
 } = require("./db/repositories");
 const { IndexerService } = require("./indexer/IndexerService");
+const {
+  inspectRepositoryUpdate,
+  applyRepositoryUpdate,
+} = require("./sync/gitSync");
 const { retrieveRepositoryExcerpts } = require("./query/search");
 const { createNimEmbedder } = require("./pipeline/embedder");
 const { getRepositoryGraph } = require("./query/graph");
@@ -215,6 +221,229 @@ async function backfillRepositoryIndexes(mainWindow) {
   }
 
   mainWindow?.webContents?.send("repositories:changed");
+}
+
+// How often Atlas asks the remotes whether anything moved. The check is a
+// `git ls-remote`, which transfers no objects, so a short interval costs
+// almost nothing; only a repository that actually moved is fetched.
+const SYNC_INTERVAL_MS = 5 * 60 * 1000;
+// Returning to the window is the moment a user is most likely looking for fresh
+// data, so a focus check is allowed — but no more often than this, or alt-tabbing
+// would hammer the remote.
+const SYNC_MIN_GAP_MS = 30 * 1000;
+
+// Re-indexes a repository whose working tree just moved, either onto the remote
+// tip or (for a dirty clone) to reflect the user's local edits. Returns false
+// when the repository was deleted while the index was in flight: the index
+// rewrote the row on its way out, so the caller must not record sync state for
+// a repository that no longer exists.
+async function reindexSyncedRepository(repository, mainWindow) {
+  await new IndexerService().indexRepo(
+    repository.localPath,
+    mainWindow,
+    {
+      externalId: repository.externalId,
+      name: repository.name,
+      url: repository.url,
+      addedAt: repository.addedAt,
+    },
+    { timeoutMs: INDEX_TIMEOUT_MS, embedder: getNimEmbedder() },
+  );
+
+  if (wasRepositoryDeleted(repository.localPath)) {
+    deleteRepository(repository.id);
+    return false;
+  }
+
+  return true;
+}
+
+// Brings one cloned repository level with its remote. Nothing is fetched until
+// the remote tip is known to differ from what was indexed, and a clone with
+// tracked local edits is left alone rather than reset — those edits are the
+// user's work, and `reset --hard` would discard them without asking.
+async function syncRepository(repository, mainWindow) {
+  const skipped = { id: repository.id, status: "skipped", changed: false };
+
+  // Only clones Atlas made are updated. A legacy row can point at the user's own
+  // checkout, and moving that working tree is not Atlas's call to make.
+  if (
+    !repository.url ||
+    !isManagedRepositoryPath(repository.localPath) ||
+    wasRepositoryDeleted(repository.localPath)
+  ) {
+    return skipped;
+  }
+
+  let update;
+
+  try {
+    update = await inspectRepositoryUpdate({
+      localPath: repository.localPath,
+      url: repository.url,
+      commitSha: repository.commitSha,
+    });
+  } catch (error) {
+    // Offline, deleted remote, or no credentials: leave the index alone and try
+    // again next pass rather than trading a working repository for an error.
+    console.warn(`Could not check ${repository.name} for updates:`, error.message);
+    return { id: repository.id, status: "unreachable", changed: false };
+  }
+
+  if (update.status === "unchanged") {
+    return { id: repository.id, status: "unchanged", changed: false };
+  }
+
+  if (update.status === "dirty") {
+    // Local edits are holding the update back. Index the tree as it stands once
+    // so answers reflect the edits, and remember the repository is behind. A
+    // repository already known to be dirty is left alone instead of re-indexed
+    // on every pass.
+    if (repository.syncState === "dirty") {
+      return { id: repository.id, status: "dirty", changed: false };
+    }
+
+    const indexed = await reindexSyncedRepository(repository, mainWindow);
+
+    if (indexed) {
+      setRepositorySyncState(repository.id, {
+        commitSha: update.baselineSha,
+        syncState: "dirty",
+      });
+    }
+
+    return { id: repository.id, status: "dirty", changed: indexed };
+  }
+
+  // update-available: the working tree carries no tracked changes, so it is safe
+  // to fast-forward onto the remote tip. A failed update leaves the recorded
+  // commit untouched, so the next pass simply tries again.
+  let applied;
+
+  try {
+    applied = await applyRepositoryUpdate(
+      { localPath: repository.localPath, url: repository.url },
+      { branch: update.branch },
+    );
+  } catch (error) {
+    console.warn(`Could not update ${repository.name}:`, error.message);
+    return { id: repository.id, status: "unreachable", changed: false };
+  }
+
+  const indexed = await reindexSyncedRepository(repository, mainWindow);
+
+  if (indexed) {
+    // The recorded commit moves only after the new content is indexed, so a
+    // failed index is retried on the next pass rather than silently skipped.
+    setRepositorySyncState(repository.id, { commitSha: applied, syncState: null });
+  }
+
+  return { id: repository.id, status: "updated", changed: indexed };
+}
+
+// One pass over every repository that came from a remote and has been indexed at
+// least once. A pass already running is shared rather than started again: the
+// timer and a window focus can land together, and two passes would index the
+// same repository twice.
+let syncInFlight = null;
+
+async function syncAllRepositories(mainWindow) {
+  if (syncInFlight) return syncInFlight;
+
+  syncInFlight = (async () => {
+    const results = [];
+
+    for (const repository of listSyncableRepositories()) {
+      try {
+        results.push(await syncRepository(repository, mainWindow));
+      } catch (error) {
+        console.error(`Failed to sync ${repository.name}:`, error);
+        results.push({ id: repository.id, status: "failed", changed: false });
+      }
+    }
+
+    return results;
+  })();
+
+  try {
+    return await syncInFlight;
+  } finally {
+    syncInFlight = null;
+  }
+}
+
+function summarizeSync(results) {
+  const count = (status) =>
+    results.filter((result) => result.status === status).length;
+
+  return {
+    checked: results.length,
+    updated: count("updated"),
+    dirty: count("dirty"),
+    unreachable: count("unreachable"),
+  };
+}
+
+let syncTimer = null;
+// Zero rather than "now" so the first focus — the window opening — runs a pass,
+// which is what picks up commits pushed while Atlas was closed.
+let lastSyncAt = 0;
+
+// Starts the background checks. A pass is not run here directly: the timer and
+// the window focus both call one, and the opening focus covers startup without
+// making launch wait on the network.
+function startSyncPoller(mainWindow) {
+  const pass = () => {
+    lastSyncAt = Date.now();
+
+    syncAllRepositories(mainWindow)
+      .then((results) => {
+        if (results.some((result) => result.changed)) {
+          mainWindow?.webContents?.send("repositories:changed");
+        }
+      })
+      .catch((error) => console.error("Repository sync failed:", error));
+  };
+
+  syncTimer = setInterval(pass, SYNC_INTERVAL_MS);
+  // The poller is a convenience, not a reason for the process to stay alive.
+  syncTimer.unref?.();
+
+  mainWindow?.on?.("focus", () => {
+    if (Date.now() - lastSyncAt < SYNC_MIN_GAP_MS) return;
+    pass();
+  });
+
+  mainWindow?.on?.("closed", () => {
+    if (syncTimer) clearInterval(syncTimer);
+    syncTimer = null;
+  });
+}
+
+// Brings one repository level with its remote even though it has local edits,
+// which is the explicit "discard and sync" the UI offers. Unlike the poller this
+// is the user's decision, so the local changes are discarded on purpose.
+async function discardRepositoryChanges(repository, mainWindow) {
+  if (!repository.url || !isManagedRepositoryPath(repository.localPath)) {
+    throw new Error("Only repositories Atlas cloned can be updated.");
+  }
+
+  const update = await inspectRepositoryUpdate({
+    localPath: repository.localPath,
+    url: repository.url,
+    commitSha: repository.commitSha,
+  });
+  const applied = await applyRepositoryUpdate(
+    { localPath: repository.localPath, url: repository.url },
+    { branch: update.branch },
+  );
+  const indexed = await reindexSyncedRepository(repository, mainWindow);
+
+  if (indexed) {
+    setRepositorySyncState(repository.id, { commitSha: applied, syncState: null });
+  }
+
+  return applied;
 }
 
 const CLONE_TIMEOUT_MS = 5 * 60 * 1000;
@@ -660,6 +889,56 @@ function registerIpcHandlers() {
     return inspectRepository(repository);
   });
 
+  // Manual refresh: the same check the background poller runs, but on demand so
+  // the user does not have to wait for the next pass. With no id every
+  // repository is checked, which is what a global "refresh" button asks for.
+  ipcMain.handle("repositories:sync", async (event, repositoryId) => {
+    const mainWindow = BrowserWindow.fromWebContents(event.sender);
+
+    if (repositoryId === undefined || repositoryId === null) {
+      const results = await syncAllRepositories(mainWindow);
+
+      if (results.some((result) => result.changed)) {
+        mainWindow?.webContents?.send("repositories:changed");
+      }
+
+      return summarizeSync(results);
+    }
+
+    const repository = findRepository(repositoryId);
+
+    if (!repository) {
+      throw new Error("Repository not found.");
+    }
+
+    const result = await syncRepository(repository, mainWindow);
+
+    if (result.changed) {
+      mainWindow?.webContents?.send("repositories:changed");
+    }
+
+    return result;
+  });
+
+  ipcMain.handle(
+    "repositories:discard-changes",
+    async (event, repositoryId) => {
+      const repository = findRepository(repositoryId);
+
+      if (!repository) {
+        throw new Error("Repository not found.");
+      }
+
+      const mainWindow = BrowserWindow.fromWebContents(event.sender);
+
+      await discardRepositoryChanges(repository, mainWindow);
+
+      mainWindow?.webContents?.send("repositories:changed");
+
+      return inspectRepository(findRepository(repositoryId));
+    },
+  );
+
   ipcMain.handle("repositories:ask", async (_, { repositoryId, question }) => {
     if (!question || typeof question !== "string") {
       throw new Error("Ask a question about this repository.");
@@ -818,6 +1097,8 @@ app.whenReady().then(async () => {
   backfillRepositoryIndexes(mainWindow).catch((error) =>
     console.error("Repository index backfill failed:", error),
   );
+  // Keeps cloned repositories level with their remotes while the app is open.
+  startSyncPoller(mainWindow);
 });
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();

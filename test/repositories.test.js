@@ -7,8 +7,10 @@ const {
   listRepositories,
   listUnindexedRepositories,
   listRepositoriesWithoutChunks,
+  listSyncableRepositories,
   findRepository,
   deleteRepository,
+  setRepositorySyncState,
   legacyRepositoriesImported,
   importLegacyRepositories,
 } = require("../electron/db/repositories");
@@ -53,6 +55,9 @@ test("maps rows to the renderer's repository shape", () => {
       localPath: "C:/data/repos/atlas-1",
       addedAt: "2026-01-02T03:04:05.000Z",
       fileCount: 7,
+      indexedAt: null,
+      commitSha: null,
+      syncState: null,
     },
   ]);
 });
@@ -98,6 +103,8 @@ test("lists only repositories that have never been indexed", () => {
       url: null,
       addedAt: null,
       externalId: null,
+      commitSha: null,
+      syncState: null,
     },
   ]);
 });
@@ -146,6 +153,8 @@ test("lists indexed repositories that have no chunks yet", () => {
       url: null,
       addedAt: null,
       externalId: null,
+      commitSha: null,
+      syncState: null,
     },
   ]);
 });
@@ -188,6 +197,67 @@ test("re-lists a repository whose chunks came from a different model", () => {
     ["old-model"],
   );
   assert.deepStrictEqual(listRepositoriesWithoutChunks(EMBED_MODEL), []);
+});
+
+test("lists only indexed repositories that have a remote to sync from", () => {
+  const db = freshDb();
+  // Syncable: a remote and a completed first index.
+  db.prepare(
+    "INSERT INTO repos (name, root_path, url, indexed_at) VALUES (?, ?, ?, ?)",
+  ).run("syncable", "C:/data/repos/syncable", "https://example.com/a.git", 123);
+  // No remote, so there is nothing to compare against.
+  db.prepare(
+    "INSERT INTO repos (name, root_path, indexed_at) VALUES (?, ?, ?)",
+  ).run("local-only", "C:/data/repos/local-only", 123);
+  // Never indexed, so the startup backfill owns it and the two passes must not
+  // read the same folder.
+  db.prepare("INSERT INTO repos (name, root_path, url) VALUES (?, ?, ?)").run(
+    "unindexed",
+    "C:/data/repos/unindexed",
+    "https://example.com/b.git",
+  );
+  // An empty url is as good as no url.
+  db.prepare(
+    "INSERT INTO repos (name, root_path, url, indexed_at) VALUES (?, ?, ?, ?)",
+  ).run("blank-url", "C:/data/repos/blank-url", "", 123);
+
+  assert.deepStrictEqual(
+    listSyncableRepositories().map((repository) => repository.name),
+    ["syncable"],
+  );
+});
+
+test("records the indexed commit and dirty state, resolving the external id", () => {
+  const db = freshDb();
+  db.prepare(
+    "INSERT INTO repos (name, root_path, external_id, indexed_at) VALUES (?, ?, ?, ?)",
+  ).run("atlas", "C:/data/repos/atlas-1", "atlas-1", 123);
+
+  assert.strictEqual(
+    setRepositorySyncState("atlas-1", { commitSha: "abc123", syncState: null }),
+    1,
+  );
+  assert.strictEqual(listRepositories()[0].commitSha, "abc123");
+  assert.strictEqual(listRepositories()[0].syncState, null);
+
+  // Local edits that hold a remote update back are recorded as dirty...
+  setRepositorySyncState("atlas-1", { commitSha: "abc123", syncState: "dirty" });
+  assert.strictEqual(listRepositories()[0].syncState, "dirty");
+
+  // ...and cleared once the clone is level with the remote again.
+  setRepositorySyncState("atlas-1", { commitSha: "def456", syncState: null });
+  assert.strictEqual(listRepositories()[0].commitSha, "def456");
+  assert.strictEqual(listRepositories()[0].syncState, null);
+
+  // An id that matches nothing changes nothing rather than throwing.
+  assert.strictEqual(
+    setRepositorySyncState("missing", { commitSha: "x", syncState: null }),
+    0,
+  );
+  assert.strictEqual(
+    setRepositorySyncState(null, { commitSha: "x", syncState: null }),
+    0,
+  );
 });
 
 // Seeds an indexed repository with one file plus the rows derived from it, so

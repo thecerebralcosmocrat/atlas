@@ -79,6 +79,12 @@ const REPOSITORY_COLUMNS = [
   ["url", "TEXT"],
   ["added_at", "TEXT"],
   ["external_id", "TEXT"],
+  // The commit whose content was last indexed. The sync poller compares it
+  // against the remote head to decide whether anything needs re-indexing.
+  ["commit_sha", "TEXT"],
+  // NULL when in sync with the remote, "dirty" when the clone has local edits
+  // that hold the remote update back.
+  ["sync_state", "TEXT"],
 ];
 
 function ensureRepositoryColumns(database) {
