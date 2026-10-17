@@ -2,7 +2,7 @@ const { app, BrowserWindow, ipcMain } = require("electron");
 const fs = require("fs/promises");
 const path = require("path");
 const simpleGit = require("simple-git");
-const { initializeDatabase } = require("./db/schema");
+const { initializeDatabase, ensureDefaultWorkspace } = require("./db/schema");
 const {
   listRepositories,
   listUnindexedRepositories,
@@ -14,6 +14,14 @@ const {
   legacyRepositoriesImported,
   importLegacyRepositories,
 } = require("./db/repositories");
+const {
+  listWorkspaces,
+  findWorkspace,
+  createWorkspace,
+  updateWorkspace,
+  deleteWorkspace,
+  moveRepositoryToWorkspace,
+} = require("./db/workspaces");
 const { IndexerService } = require("./indexer/IndexerService");
 const {
   inspectRepositoryUpdate,
@@ -107,6 +115,26 @@ function getAtlasPaths() {
     repositoriesRoot: path.join(atlasRoot, "repositories"),
     storePath: path.join(atlasRoot, "repositories.json"),
   };
+}
+
+// The settings file can outlive the database row it points at (the workspace
+// was deleted, or the index was rebuilt). Verify the selection on every read
+// and fall back to the default workspace rather than showing an empty sidebar
+// until the user changes something. listWorkspaces puts the default first.
+function getActiveWorkspaceId() {
+  const configuredId = getResolvedSettings().general.activeWorkspaceId;
+
+  if (configuredId !== null && findWorkspace(configuredId)) {
+    return configuredId;
+  }
+
+  return listWorkspaces()[0]?.id ?? null;
+}
+
+function notifyWorkspacesChanged(event) {
+  BrowserWindow.fromWebContents(event.sender)?.webContents?.send(
+    "workspaces:changed",
+  );
 }
 
 async function ensureAtlasStorage() {
@@ -210,6 +238,7 @@ async function backfillRepositoryIndexes(mainWindow) {
           name: repository.name,
           url: repository.url,
           addedAt: repository.addedAt,
+          workspaceId: repository.workspaceId,
         },
         { timeoutMs: INDEX_TIMEOUT_MS, embedder },
       );
@@ -251,6 +280,7 @@ async function reindexSyncedRepository(repository, mainWindow) {
       name: repository.name,
       url: repository.url,
       addedAt: repository.addedAt,
+      workspaceId: repository.workspaceId,
     },
     { timeoutMs: INDEX_TIMEOUT_MS, embedder: getNimEmbedder() },
   );
@@ -1016,8 +1046,63 @@ function registerIpcHandlers() {
     return { path: atlasRoot };
   });
 
+  ipcMain.handle("workspaces:list", async () => {
+    return listWorkspaces();
+  });
+
+  ipcMain.handle("workspaces:create", async (event, patch) => {
+    const workspace = createWorkspace(patch ?? {});
+    notifyWorkspacesChanged(event);
+
+    return workspace;
+  });
+
+  ipcMain.handle("workspaces:update", async (event, payload = {}) => {
+    const { workspaceId, patch } = payload;
+    const workspace = updateWorkspace(workspaceId, patch ?? {});
+    notifyWorkspacesChanged(event);
+
+    return workspace;
+  });
+
+  ipcMain.handle("workspaces:remove", async (event, workspaceId) => {
+    const result = deleteWorkspace(workspaceId);
+    const mainWindow = BrowserWindow.fromWebContents(event.sender);
+
+    // Deleting the selected workspace leaves the persisted selection pointing
+    // at a row that no longer exists. Adopt the default now so every later
+    // read (and the next launch) agrees with what repositories:list returns.
+    if (getResolvedSettings().general.activeWorkspaceId === result.id) {
+      const fallbackWorkspaceId = listWorkspaces()[0]?.id ?? null;
+      const updatedSettings = updateSettings({
+        general: { activeWorkspaceId: fallbackWorkspaceId },
+      });
+
+      mainWindow?.webContents?.send("settings:changed", updatedSettings);
+    }
+
+    mainWindow?.webContents?.send("workspaces:changed");
+    mainWindow?.webContents?.send("repositories:changed");
+
+    return result;
+  });
+
+  // Scoped to the active workspace: the sidebar shows one workspace at a time,
+  // while storage accounting and the legacy channels still see every row.
   ipcMain.handle("repositories:list", async () => {
-    return listRepositories();
+    return listRepositories(getActiveWorkspaceId());
+  });
+
+  ipcMain.handle("repositories:move", async (event, { repositoryId, workspaceId }) => {
+    const result = moveRepositoryToWorkspace(repositoryId, workspaceId);
+    const mainWindow = BrowserWindow.fromWebContents(event.sender);
+
+    // The source and target workspace counts both changed, and a repository
+    // just left (or entered) the visible list.
+    mainWindow?.webContents?.send("workspaces:changed");
+    mainWindow?.webContents?.send("repositories:changed");
+
+    return result;
   });
 
   ipcMain.handle("repositories:add", async (event, repositoryUrl) => {
@@ -1029,6 +1114,9 @@ function registerIpcHandlers() {
     const localPath = path.join(repositoriesRoot, id);
     const addedAt = new Date().toISOString();
     const mainWindow = BrowserWindow.fromWebContents(event.sender);
+    // Captured up front: the user expects the clone to land in the workspace
+    // that was selected when they asked for it.
+    const workspaceId = getActiveWorkspaceId();
 
     try {
       await simpleGit({ timeout: { block: CLONE_TIMEOUT_MS } }).clone(
@@ -1043,7 +1131,7 @@ function registerIpcHandlers() {
       await new IndexerService().indexRepo(
         localPath,
         mainWindow,
-        { externalId: id, name, url: trimmedUrl, addedAt },
+        { externalId: id, name, url: trimmedUrl, addedAt, workspaceId },
         { timeoutMs: INDEX_TIMEOUT_MS, embedder: getNimEmbedder() },
       );
     } catch (error) {
@@ -1052,6 +1140,8 @@ function registerIpcHandlers() {
       await fs.rm(localPath, { recursive: true, force: true }).catch(() => {});
       throw error;
     }
+
+    notifyWorkspacesChanged(event);
 
     return inspectRepository(findRepository(id));
   });
@@ -1091,6 +1181,7 @@ function registerIpcHandlers() {
     BrowserWindow.fromWebContents(event.sender)?.webContents?.send(
       "repositories:changed",
     );
+    notifyWorkspacesChanged(event);
 
     return { id: repository.id };
   });
@@ -1336,7 +1427,11 @@ app.whenReady().then(async () => {
   // Loaded before the window so the saved theme and sync policy apply from the
   // first frame rather than being corrected after the renderer mounts.
   initializeSettings(path.join(atlasRoot, "settings.json"));
-  initializeDatabase(path.join(atlasRoot, "atlas.db"));
+  // Adoption runs on every launch rather than only when initializeDatabase
+  // opens the file: another module (or the CLI) may have initialized the
+  // singleton earlier, and a repository without a workspace would otherwise
+  // be invisible in the sidebar.
+  ensureDefaultWorkspace(initializeDatabase(path.join(atlasRoot, "atlas.db")));
   await migrateLegacyRepositories();
   registerIpcHandlers();
   const mainWindow = createWindow();

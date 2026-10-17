@@ -20,6 +20,13 @@ const SCHEMA_STATEMENTS = [
     key TEXT PRIMARY KEY,
     value TEXT
   )`,
+  `CREATE TABLE IF NOT EXISTS workspaces (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    description TEXT,
+    is_default INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT
+  )`,
   `CREATE TABLE IF NOT EXISTS files (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     repo_id INTEGER,
@@ -70,6 +77,10 @@ const SCHEMA_STATEMENTS = [
   `CREATE INDEX IF NOT EXISTS idx_imports_source_file_id ON imports(source_file_id)`,
   `CREATE INDEX IF NOT EXISTS idx_symbols_file_id ON symbols(file_id)`,
   `CREATE INDEX IF NOT EXISTS idx_chunks_file_id ON chunks(file_id)`,
+  // Names are compared case-insensitively so "Work" and "work" cannot both
+  // exist and make the switcher ambiguous.
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_workspaces_name
+     ON workspaces(name COLLATE NOCASE)`,
 ];
 
 // Columns added after the original schema shipped. `CREATE TABLE IF NOT EXISTS`
@@ -85,7 +96,14 @@ const REPOSITORY_COLUMNS = [
   // NULL when in sync with the remote, "dirty" when the clone has local edits
   // that hold the remote update back.
   ["sync_state", "TEXT"],
+  // The workspace a repository is filed under. NULL is only possible in a
+  // database from before workspaces existed; ensureDefaultWorkspace adopts
+  // those rows on startup.
+  ["workspace_id", "INTEGER"],
 ];
+
+const DEFAULT_WORKSPACE_NAME = "Personal";
+const DEFAULT_WORKSPACE_DESCRIPTION = "Local projects and experiments";
 
 function ensureRepositoryColumns(database) {
   const existingColumns = new Set(
@@ -101,6 +119,56 @@ function ensureRepositoryColumns(database) {
   database.exec(
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_repos_external_id ON repos(external_id)",
   );
+  // Indexed after the migration above, because `repos` is created without the
+  // workspace column on a fresh database and legacy tables lack it entirely.
+  database.exec(
+    "CREATE INDEX IF NOT EXISTS idx_repos_workspace_id ON repos(workspace_id)",
+  );
+}
+
+// Every database has exactly one default workspace. It is created before the
+// first repository is added and adopted by rows from databases that predate
+// workspaces, so a repository never disappears from the sidebar.
+function ensureDefaultWorkspace(database) {
+  let defaultWorkspace = database
+    .prepare(
+      "SELECT id FROM workspaces WHERE is_default = 1 ORDER BY id LIMIT 1",
+    )
+    .get();
+
+  if (!defaultWorkspace) {
+    // A database that already has workspaces but no default (for example one
+    // written by a partial migration) promotes its oldest workspace rather
+    // than adding a second, empty one.
+    const oldestWorkspace = database
+      .prepare("SELECT id FROM workspaces ORDER BY id LIMIT 1")
+      .get();
+
+    if (oldestWorkspace) {
+      database
+        .prepare("UPDATE workspaces SET is_default = 1 WHERE id = ?")
+        .run(oldestWorkspace.id);
+      defaultWorkspace = oldestWorkspace;
+    } else {
+      const result = database
+        .prepare(
+          `INSERT INTO workspaces (name, description, is_default, created_at)
+           VALUES (?, ?, 1, ?)`,
+        )
+        .run(
+          DEFAULT_WORKSPACE_NAME,
+          DEFAULT_WORKSPACE_DESCRIPTION,
+          new Date().toISOString(),
+        );
+      defaultWorkspace = { id: Number(result.lastInsertRowid) };
+    }
+  }
+
+  database
+    .prepare("UPDATE repos SET workspace_id = ? WHERE workspace_id IS NULL")
+    .run(defaultWorkspace.id);
+
+  return defaultWorkspace.id;
 }
 
 function getDefaultDbPath() {
@@ -128,6 +196,7 @@ function initializeDatabase(resolvedDbPath) {
   }
 
   ensureRepositoryColumns(db);
+  ensureDefaultWorkspace(db);
 
   dbPath = resolvedDbPath;
   return db;
@@ -152,4 +221,11 @@ function closeDatabase() {
   dbPath = null;
 }
 
-module.exports = { initializeDatabase, getDb, closeDatabase };
+module.exports = {
+  initializeDatabase,
+  getDb,
+  closeDatabase,
+  ensureDefaultWorkspace,
+  DEFAULT_WORKSPACE_NAME,
+  DEFAULT_WORKSPACE_DESCRIPTION,
+};

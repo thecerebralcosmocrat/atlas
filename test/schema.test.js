@@ -20,9 +20,48 @@ test("creates the expected tables", () => {
     .all()
     .map((row) => row.name);
 
-  for (const expected of ["repos", "files", "imports", "symbols"]) {
+  for (const expected of ["repos", "files", "imports", "symbols", "workspaces"]) {
     assert.ok(tables.includes(expected), `expected table '${expected}'`);
   }
+});
+
+test("seeds exactly one default workspace", () => {
+  const db = initializeDatabase(makeTempDbPath());
+  const workspaces = db.prepare("SELECT * FROM workspaces").all();
+
+  assert.strictEqual(workspaces.length, 1);
+  assert.strictEqual(workspaces[0].name, "Personal");
+  assert.strictEqual(workspaces[0].is_default, 1);
+});
+
+test("adopts repositories from a database that predates workspaces", () => {
+  const dbPath = makeTempDbPath();
+  const legacy = new Database(dbPath);
+
+  legacy.exec(`
+    CREATE TABLE repos (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT,
+      root_path TEXT UNIQUE,
+      indexed_at INTEGER,
+      file_count INTEGER
+    )
+  `);
+  legacy.prepare("INSERT INTO repos (name, root_path) VALUES (?, ?)").run(
+    "old",
+    "/tmp/atlas-old",
+  );
+  legacy.close();
+
+  const db = initializeDatabase(dbPath);
+  const { id: defaultId } = db
+    .prepare("SELECT id FROM workspaces WHERE is_default = 1")
+    .get();
+  const repository = db.prepare("SELECT workspace_id FROM repos").get();
+
+  // A repository must never disappear from the sidebar just because it was
+  // indexed before workspaces existed.
+  assert.strictEqual(repository.workspace_id, defaultId);
 });
 
 test("is idempotent for the same path", () => {
@@ -66,7 +105,7 @@ test("migrates a legacy database missing the repository metadata columns", () =>
     .all()
     .map((row) => row.name);
 
-  for (const expected of ["url", "added_at", "external_id"]) {
+  for (const expected of ["url", "added_at", "external_id", "workspace_id"]) {
     assert.ok(columns.includes(expected), `expected column '${expected}'`);
   }
 

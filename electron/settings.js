@@ -31,6 +31,10 @@ const DEFAULTS = Object.freeze({
     theme: "system",
     autoSync: true,
     syncIntervalMinutes: 5,
+    // The workspace whose repositories the sidebar shows. Stored here rather
+    // than in the database so the last selection survives restarts even if the
+    // index is rebuilt. Null means "resolve to the default workspace".
+    activeWorkspaceId: null,
   },
 });
 
@@ -119,6 +123,10 @@ function isValidSyncInterval(value) {
   );
 }
 
+function isValidWorkspaceId(value) {
+  return Number.isInteger(value) && value > 0;
+}
+
 function isHttpUrl(value) {
   try {
     const url = new URL(value);
@@ -152,6 +160,9 @@ function normalizeStoredSettings(value) {
   }
   if (isValidSyncInterval(general.syncIntervalMinutes)) {
     next.general.syncIntervalMinutes = general.syncIntervalMinutes;
+  }
+  if (isValidWorkspaceId(general.activeWorkspaceId)) {
+    next.general.activeWorkspaceId = general.activeWorkspaceId;
   }
 
   if (
@@ -349,6 +360,16 @@ function validateGeneralPatch(next, patch) {
     }
 
     next.general.syncIntervalMinutes = patch.syncIntervalMinutes;
+  }
+
+  if ("activeWorkspaceId" in patch) {
+    const value = patch.activeWorkspaceId;
+
+    if (value !== null && !isValidWorkspaceId(value)) {
+      throw new Error("Invalid active workspace.");
+    }
+
+    next.general.activeWorkspaceId = value;
   }
 }
 

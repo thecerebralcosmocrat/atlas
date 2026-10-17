@@ -1,7 +1,7 @@
-const { getDb } = require("./schema");
+const { getDb, ensureDefaultWorkspace } = require("./schema");
 
 const REPOSITORY_COLUMNS =
-  "id, name, root_path, url, added_at, external_id, file_count, indexed_at, commit_sha, sync_state";
+  "id, name, root_path, url, added_at, external_id, file_count, indexed_at, commit_sha, sync_state, workspace_id";
 
 const LEGACY_IMPORTED_KEY = "legacy_repositories_imported";
 
@@ -21,13 +21,31 @@ function mapRepositoryRow(row) {
     indexedAt: row.indexed_at ?? null,
     commitSha: row.commit_sha ?? null,
     syncState: row.sync_state ?? null,
+    workspaceId: row.workspace_id ?? null,
   };
 }
 
-function listRepositories() {
+// `workspaceId` optionally scopes the list to one workspace. Omitted or null
+// returns every repository, which storage accounting and the legacy
+// `get-repos` channel still rely on.
+function listRepositories(workspaceId = null) {
+  if (workspaceId === null || workspaceId === undefined) {
+    const rows = getDb()
+      .prepare(`SELECT ${REPOSITORY_COLUMNS} FROM repos ORDER BY id DESC`)
+      .all();
+
+    return rows.map(mapRepositoryRow);
+  }
+
+  const id = Number(workspaceId);
+
+  if (!Number.isInteger(id)) return [];
+
   const rows = getDb()
-    .prepare(`SELECT ${REPOSITORY_COLUMNS} FROM repos ORDER BY id DESC`)
-    .all();
+    .prepare(
+      `SELECT ${REPOSITORY_COLUMNS} FROM repos WHERE workspace_id = ? ORDER BY id DESC`,
+    )
+    .all(id);
 
   return rows.map(mapRepositoryRow);
 }
@@ -45,6 +63,7 @@ function mapIndexTargetRow(row) {
     externalId: row.external_id ?? null,
     commitSha: row.commit_sha ?? null,
     syncState: row.sync_state ?? null,
+    workspaceId: row.workspace_id ?? null,
   };
 }
 
@@ -228,14 +247,19 @@ function importLegacyRepositories(legacyRepositories) {
   }
 
   const db = getDb();
+  // Legacy rows predate workspaces, so they join the default workspace. The
+  // conflict clause keeps a repository that already has a workspace where it
+  // is; the import only ever fills gaps.
+  const defaultWorkspaceId = ensureDefaultWorkspace(db);
   const upsert = db.prepare(`
-    INSERT INTO repos (name, root_path, url, added_at, external_id, indexed_at, file_count)
-    VALUES (@name, @rootPath, @url, @addedAt, @externalId, NULL, 0)
+    INSERT INTO repos (name, root_path, url, added_at, external_id, indexed_at, file_count, workspace_id)
+    VALUES (@name, @rootPath, @url, @addedAt, @externalId, NULL, 0, @workspaceId)
     ON CONFLICT(root_path) DO UPDATE SET
       name = COALESCE(excluded.name, repos.name),
       url = COALESCE(excluded.url, repos.url),
       added_at = COALESCE(excluded.added_at, repos.added_at),
-      external_id = COALESCE(excluded.external_id, repos.external_id)
+      external_id = COALESCE(excluded.external_id, repos.external_id),
+      workspace_id = COALESCE(repos.workspace_id, excluded.workspace_id)
   `);
   const markImported = db.prepare(`
     INSERT INTO meta (key, value) VALUES (?, '1')
@@ -254,6 +278,7 @@ function importLegacyRepositories(legacyRepositories) {
         url: repository.url ?? null,
         addedAt: repository.addedAt ?? null,
         externalId: repository.id ?? null,
+        workspaceId: defaultWorkspaceId,
       });
 
       imported.push(repository);
@@ -274,6 +299,7 @@ module.exports = {
   listRepositoriesWithoutChunks,
   listSyncableRepositories,
   findRepository,
+  resolveRepositoryRowId,
   deleteRepository,
   setRepositorySyncState,
   legacyRepositoriesImported,

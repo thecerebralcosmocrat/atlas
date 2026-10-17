@@ -58,6 +58,7 @@ test("maps rows to the renderer's repository shape", () => {
       indexedAt: null,
       commitSha: null,
       syncState: null,
+      workspaceId: null,
     },
   ]);
 });
@@ -105,6 +106,7 @@ test("lists only repositories that have never been indexed", () => {
       externalId: null,
       commitSha: null,
       syncState: null,
+      workspaceId: null,
     },
   ]);
 });
@@ -155,6 +157,7 @@ test("lists indexed repositories that have no chunks yet", () => {
       externalId: null,
       commitSha: null,
       syncState: null,
+      workspaceId: null,
     },
   ]);
 });

@@ -138,9 +138,25 @@ class IndexerService {
 
     const indexedAt = Date.now();
 
+    // Every repository belongs to a workspace. A caller that does not know the
+    // workspace (the CLI, `index-repo`, tests) gets the default one on insert,
+    // and so does a caller whose captured workspace was deleted during its
+    // long clone: the id must resolve against the table, not simply be trusted,
+    // or the new row lands in a workspace that no longer exists and disappears
+    // from every sidebar.
+    // The conflict clause deliberately leaves workspace_id alone: re-indexing
+    // is not a filing decision, and a workspace id captured before a long
+    // clone/sync would otherwise undo a move the user made meanwhile. Only
+    // moveRepositoryToWorkspace changes a repository's workspace.
     const upsertRepo = db.prepare(`
-      INSERT INTO repos (name, root_path, indexed_at, file_count, url, added_at, external_id)
-      VALUES (@name, @rootPath, @indexedAt, 0, @url, @addedAt, @externalId)
+      INSERT INTO repos (name, root_path, indexed_at, file_count, url, added_at, external_id, workspace_id)
+      VALUES (
+        @name, @rootPath, @indexedAt, 0, @url, @addedAt, @externalId,
+        COALESCE(
+          (SELECT id FROM workspaces WHERE id = @workspaceId),
+          (SELECT id FROM workspaces WHERE is_default = 1 ORDER BY id LIMIT 1)
+        )
+      )
       ON CONFLICT(root_path) DO UPDATE SET
         name = COALESCE(@nameOverride, repos.name),
         indexed_at = excluded.indexed_at,
@@ -199,6 +215,7 @@ class IndexerService {
         url: metadata.url ?? null,
         addedAt: metadata.addedAt ?? null,
         externalId: metadata.externalId ?? null,
+        workspaceId: metadata.workspaceId ?? null,
         nameOverride: metadata.name ?? null,
       });
       const { id: repoId } = selectRepoId.get(rootPath);

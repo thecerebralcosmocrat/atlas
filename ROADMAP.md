@@ -35,7 +35,7 @@ answers questions about the code.
 | 1 — Make the app functional | Add a repo, watch it index, browse files, ask grounded questions | I0–I6 | done |
 | 2 — Code graph + RAG | Explore how files, symbols, and imports connect; retrieve answers by meaning, not keywords | I7–I8 | done |
 | 3 — Onboarding intelligence | A generated "start here" path plus impact and ownership answers for an unfamiliar codebase | I9–I11 | done |
-| 4 — Personal workspaces and settings | Global settings, then named workspaces that scope the sidebar | I12–I13 | in progress |
+| 4 — Personal workspaces and settings | Global settings, then named workspaces that scope the sidebar | I12–I13 | done |
 
 Phase 2 was never written down as its own section — the original draft deferred
 "code graph + RAG" as Phase 3 while the chat-grounding work (I5) and add/index
@@ -327,7 +327,7 @@ workspace must not silently switch which API key answers a question.
 | # | Increment | State |
 |---|---|---|
 | I12 | Global settings | done |
-| I13 | Workspaces/profiles | planned |
+| I13 | Workspaces/profiles | done |
 
 ### I12 — Global settings
 
@@ -368,18 +368,41 @@ development, so there was no supported way to set a key in a built app.
 
 ### I13 — Workspaces/profiles
 
-The sidebar's Personal/Work/Archive switcher is still a hardcoded list that only
-changes a label. This increment makes it real:
+The sidebar's Personal/Work/Archive switcher was a hardcoded list that only
+changed a label. This increment makes it real:
 
-- A `workspaces` table plus a nullable `repos.workspace_id`, with a default
-  workspace created on first launch so existing repositories remain visible.
-- The add flow assigns new repositories to the active workspace; a repo action
-  moves an existing one.
-- The sidebar shows repositories for the selected workspace only, and the
-  selection persists by reusing the I12 settings store.
-- Creating, renaming, and deleting workspaces lives on the Settings page.
-  Deleting a workspace moves its repositories to the default workspace rather
-  than deleting indexed data.
+- Schema: `electron/db/schema.js` adds a `workspaces` table (unique
+  case-insensitive name) and a nullable `repos.workspace_id` with an index.
+  `ensureDefaultWorkspace` runs on every launch, creates or promotes exactly one
+  default workspace, and adopts rows whose `workspace_id` is still NULL, so a
+  database from before workspaces keeps every repository visible.
+- Data layer: `electron/db/workspaces.js` owns list/create/update/delete and
+  moves. Names and descriptions are trimmed and length-limited; duplicate names
+  are rejected case-insensitively with a readable error. Deleting a workspace
+  reassigns its repositories to the default in a single transaction and returns
+  `movedRepositoryCount`; the default workspace itself cannot be deleted.
+- Indexing: `IndexerService.indexRepo` files a new repository under the
+  `workspaceId` in its metadata, falls back to the default when none is given
+  (the CLI and tests), and never moves an existing repository on re-index.
+  `importLegacyRepositories` does the same for `repositories.json` migration.
+- Selection: `general.activeWorkspaceId` in the I12 settings store records the
+  choice. `repositories:list` resolves it on every read and falls back to the
+  default if the id no longer exists, so a stale selection cannot empty the
+  sidebar. Adding a repository captures the active workspace up front, and
+  deleting the active workspace persists the fallback before broadcasting.
+- IPC: `workspaces:list|create|update|remove` plus `repositories:move`, with
+  `workspaces:changed` and `repositories:changed` events so the sidebar counts
+  and list refresh without a reload.
+- UI: the sidebar switcher and repository rows are driven by the database, with
+  a "Move to workspace" action per repository and workspace counts.
+  `src/pages/Settings.jsx` gains a Workspaces section that creates, renames, and
+  deletes them; the delete dialog states that repositories move to the default
+  and indexed data stays on disk.
+- Tests: `test/workspaces.test.js` covers default seeding/adoption, ordering and
+  counts, validation and duplicate names, partial updates, moves, delete-to-
+  default (including files surviving), and indexer fallback behavior.
+  `test/schema.test.js` and `test/settings.test.js` cover the migration columns
+  and the new setting's defaults, persistence, and validation.
 
 ## Testing
 

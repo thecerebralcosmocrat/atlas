@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   HashRouter as Router,
   Routes,
@@ -18,8 +18,13 @@ function getSettingsApi() {
   return window.electronAPI?.settings;
 }
 
+function getWorkspaceApi() {
+  return window.electronAPI?.workspaces;
+}
+
 export default function App() {
   const [repositories, setRepositories] = useState([]);
+  const [workspaces, setWorkspaces] = useState([]);
   const [selectedRepositoryId, setSelectedRepositoryId] = useState(null);
   const [selectedDetails, setSelectedDetails] = useState(null);
   const [isInspecting, setIsInspecting] = useState(false);
@@ -29,6 +34,7 @@ export default function App() {
   const [refreshToken, setRefreshToken] = useState(0);
   const repositoryApi = useMemo(getRepositoryApi, []);
   const settingsApi = useMemo(getSettingsApi, []);
+  const workspaceApi = useMemo(getWorkspaceApi, []);
 
   useEffect(() => {
     let active = true;
@@ -60,6 +66,49 @@ export default function App() {
     );
   }, [settingsApi]);
 
+  useEffect(() => {
+    let active = true;
+
+    async function loadWorkspaces() {
+      if (!workspaceApi) return;
+
+      try {
+        const storedWorkspaces = await workspaceApi.list();
+
+        // The main process reloaded the list from SQLite, so the counts are
+        // current; this is also how a move or delete updates the switcher.
+        if (active) setWorkspaces(storedWorkspaces);
+      } catch (error) {
+        console.error("Failed to load workspaces:", error);
+      }
+    }
+
+    loadWorkspaces();
+
+    const unsubscribe = workspaceApi?.onChanged?.(loadWorkspaces);
+
+    return () => {
+      active = false;
+      unsubscribe?.();
+    };
+  }, [workspaceApi, refreshToken]);
+
+  // The configured id can be stale (the workspace was deleted on another
+  // launch), so trust the database list and fall back to the default, which
+  // listWorkspaces returns first.
+  const configuredWorkspaceId = settings?.general?.activeWorkspaceId ?? null;
+  const activeWorkspace =
+    workspaces.find((workspace) => workspace.id === configuredWorkspaceId) ??
+    workspaces[0] ??
+    null;
+  // Read inside async handlers, which may resolve after the user switches
+  // workspaces; state captured at call time would be stale by then.
+  const activeWorkspaceIdRef = useRef(null);
+
+  useEffect(() => {
+    activeWorkspaceIdRef.current = activeWorkspace?.id ?? null;
+  }, [activeWorkspace?.id]);
+
   // The main process keeps the native titlebar and native surfaces in step;
   // the renderer owns the class that swaps the CSS variables.
   useEffect(() => {
@@ -84,18 +133,22 @@ export default function App() {
     async function loadRepositories() {
       if (!repositoryApi) return;
 
+      // The main process scopes this to the active workspace. Switching
+      // workspaces therefore re-reads the list and cannot leave a repository
+      // from the previous workspace selected.
       const storedRepositories = await repositoryApi.list();
       setRepositories(storedRepositories);
-
-      if (storedRepositories.length > 0) {
-        setSelectedRepositoryId(
-          (currentId) => currentId || storedRepositories[0].id,
+      setSelectedRepositoryId((currentId) => {
+        const stillListed = storedRepositories.some(
+          (repository) => repository.id === currentId,
         );
-      }
+
+        return stillListed ? currentId : (storedRepositories[0]?.id ?? null);
+      });
     }
 
     loadRepositories();
-  }, [repositoryApi, refreshToken]);
+  }, [repositoryApi, refreshToken, activeWorkspace?.id]);
 
   useEffect(() => {
     if (!repositoryApi?.onChanged) return undefined;
@@ -136,6 +189,16 @@ export default function App() {
     }
 
     const repository = await repositoryApi.add(repositoryUrl);
+
+    // Indexing can take a while. If the workspace changed in the meantime, the
+    // repository belongs to the workspace that was active when the add began,
+    // so reload the scoped list instead of injecting it into the current one.
+    if (repository.workspaceId !== activeWorkspaceIdRef.current) {
+      setRefreshToken((currentToken) => currentToken + 1);
+
+      return repository;
+    }
+
     setRepositories((currentRepositories) => [
       repository,
       ...currentRepositories.filter((item) => item.id !== repository.id),
@@ -192,6 +255,46 @@ export default function App() {
     return updatedSettings;
   };
 
+  const handleSwitchWorkspace = async (workspaceId) => {
+    if (workspaceId === activeWorkspace?.id) return;
+
+    // Persisting the selection is what makes `repositories:list` return the
+    // new workspace on the next read, and what restores it on the next launch.
+    await handleUpdateSettings({ general: { activeWorkspaceId: workspaceId } });
+  };
+
+  const handleMoveRepository = async (repositoryId, workspaceId) => {
+    if (!repositoryApi?.move) {
+      throw new Error("Workspaces are only available in the Electron app.");
+    }
+
+    return repositoryApi.move(repositoryId, workspaceId);
+  };
+
+  const handleCreateWorkspace = async (workspace) => {
+    if (!workspaceApi) {
+      throw new Error("Workspaces are only available in the Electron app.");
+    }
+
+    return workspaceApi.create(workspace);
+  };
+
+  const handleUpdateWorkspace = async (workspaceId, patch) => {
+    if (!workspaceApi) {
+      throw new Error("Workspaces are only available in the Electron app.");
+    }
+
+    return workspaceApi.update(workspaceId, patch);
+  };
+
+  const handleDeleteWorkspace = async (workspaceId) => {
+    if (!workspaceApi) {
+      throw new Error("Workspaces are only available in the Electron app.");
+    }
+
+    return workspaceApi.remove(workspaceId);
+  };
+
   const handleDeleteRepository = async (repositoryId) => {
     if (!repositoryApi) {
       throw new Error(
@@ -227,8 +330,12 @@ export default function App() {
           <div className="flex flex-1 overflow-hidden">
             <Sidebar
               repositories={repositories}
+              workspaces={workspaces}
+              activeWorkspace={activeWorkspace}
               selectedRepositoryId={selectedRepositoryId}
               onSelectRepository={setSelectedRepositoryId}
+              onSwitchWorkspace={handleSwitchWorkspace}
+              onMoveRepository={handleMoveRepository}
               onRequestDeleteRepository={handleDeleteRepository}
             />
 
@@ -243,7 +350,11 @@ export default function App() {
                   element={
                     <Settings
                       settings={settings}
+                      workspaces={workspaces}
                       onUpdateSettings={handleUpdateSettings}
+                      onCreateWorkspace={handleCreateWorkspace}
+                      onUpdateWorkspace={handleUpdateWorkspace}
+                      onDeleteWorkspace={handleDeleteWorkspace}
                     />
                   }
                 />

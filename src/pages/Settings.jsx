@@ -3,10 +3,22 @@ import {
   FolderOpen,
   Monitor,
   Moon,
+  Pencil,
+  Plus,
   RefreshCw,
   Sun,
   Trash2,
 } from "lucide-react";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
@@ -115,7 +127,267 @@ function Description({ children, tone = "muted" }) {
   );
 }
 
-export default function Settings({ settings, onUpdateSettings }) {
+function workspaceCountLabel(count) {
+  return `${count} ${count === 1 ? "repository" : "repositories"}`;
+}
+
+// Workspaces scope the sidebar. They are managed here rather than in the
+// switcher so creating one is a deliberate action and a rename has room for a
+// description. Deleting moves repositories to the default workspace; it never
+// touches the index, which is why the confirmation says so.
+function WorkspaceSection({
+  workspaces = [],
+  onCreateWorkspace,
+  onUpdateWorkspace,
+  onDeleteWorkspace,
+}) {
+  const [newName, setNewName] = useState("");
+  const [newDescription, setNewDescription] = useState("");
+  const [editingId, setEditingId] = useState(null);
+  const [draftName, setDraftName] = useState("");
+  const [draftDescription, setDraftDescription] = useState("");
+  const [confirmWorkspace, setConfirmWorkspace] = useState(null);
+  const [isBusy, setIsBusy] = useState(false);
+  const [status, setStatus] = useState(null);
+
+  const startEditing = (workspace) => {
+    setEditingId(workspace.id);
+    setDraftName(workspace.name);
+    setDraftDescription(workspace.description);
+    setStatus(null);
+  };
+
+  const handleCreate = async (event) => {
+    event.preventDefault();
+    setIsBusy(true);
+    setStatus(null);
+
+    try {
+      await onCreateWorkspace({ name: newName, description: newDescription });
+      setNewName("");
+      setNewDescription("");
+      setStatus({ ok: true, message: "Workspace created." });
+    } catch (error) {
+      setStatus({
+        ok: false,
+        message: error.message || "Could not create the workspace.",
+      });
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  const handleSave = async (workspaceId) => {
+    setIsBusy(true);
+    setStatus(null);
+
+    try {
+      await onUpdateWorkspace(workspaceId, {
+        name: draftName,
+        description: draftDescription,
+      });
+      setEditingId(null);
+      setStatus({ ok: true, message: "Workspace updated." });
+    } catch (error) {
+      setStatus({
+        ok: false,
+        message: error.message || "Could not update the workspace.",
+      });
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  const handleDelete = async (event) => {
+    // The action is a dialog close button by default; hold it open until the
+    // main process confirms so a failure stays visible.
+    event.preventDefault();
+
+    if (!confirmWorkspace) return;
+
+    setIsBusy(true);
+    setStatus(null);
+
+    try {
+      const result = await onDeleteWorkspace(confirmWorkspace.id);
+      const moved = result?.movedRepositoryCount ?? 0;
+
+      setConfirmWorkspace(null);
+      setStatus({
+        ok: true,
+        message:
+          moved > 0
+            ? `Workspace deleted. ${workspaceCountLabel(moved)} moved to the default workspace.`
+            : "Workspace deleted.",
+      });
+    } catch (error) {
+      setStatus({
+        ok: false,
+        message: error.message || "Could not delete the workspace.",
+      });
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  return (
+    <>
+      {workspaces.map((workspace) => (
+        <Row
+          key={workspace.id}
+          label={workspace.name}
+          hint={`${workspaceCountLabel(workspace.repositoryCount)}${
+            workspace.description ? ` · ${workspace.description}` : ""
+          }${workspace.isDefault ? " · Default workspace" : ""}`}
+        >
+          {editingId === workspace.id ? (
+            <div className="flex flex-col gap-2">
+              <Input
+                aria-label={`Name for ${workspace.name}`}
+                value={draftName}
+                onChange={(event) => setDraftName(event.target.value)}
+                disabled={isBusy}
+              />
+              <Input
+                aria-label={`Description for ${workspace.name}`}
+                value={draftDescription}
+                placeholder="Description (optional)"
+                onChange={(event) => setDraftDescription(event.target.value)}
+                disabled={isBusy}
+              />
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={() => handleSave(workspace.id)}
+                  disabled={isBusy}
+                >
+                  {isBusy ? "Saving…" : "Save"}
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setEditingId(null)}
+                  disabled={isBusy}
+                >
+                  Cancel
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={() => startEditing(workspace)}
+              >
+                <Pencil />
+                Rename
+              </Button>
+              {!workspace.isDefault && (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => {
+                    setStatus(null);
+                    setConfirmWorkspace(workspace);
+                  }}
+                >
+                  <Trash2 />
+                  Delete
+                </Button>
+              )}
+            </div>
+          )}
+        </Row>
+      ))}
+
+      <div className="px-4 py-4">
+        <form
+          className="flex flex-col gap-2 sm:flex-row sm:items-center"
+          onSubmit={handleCreate}
+        >
+          <Input
+            aria-label="New workspace name"
+            placeholder="New workspace name"
+            value={newName}
+            onChange={(event) => setNewName(event.target.value)}
+            disabled={isBusy}
+          />
+          <Input
+            aria-label="New workspace description"
+            placeholder="Description (optional)"
+            value={newDescription}
+            onChange={(event) => setNewDescription(event.target.value)}
+            disabled={isBusy}
+          />
+          <Button
+            type="submit"
+            size="sm"
+            className="flex-shrink-0"
+            disabled={isBusy || !newName.trim()}
+          >
+            <Plus />
+            Create
+          </Button>
+        </form>
+
+        <div className="mt-2 min-h-4" aria-live="polite">
+          {status && (
+            <Description tone={status.ok ? "muted" : "error"}>
+              {status.message}
+            </Description>
+          )}
+        </div>
+      </div>
+
+      <AlertDialog
+        open={Boolean(confirmWorkspace)}
+        onOpenChange={(open) => {
+          if (isBusy) return;
+          if (!open) setConfirmWorkspace(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              Delete {confirmWorkspace?.name}?
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {confirmWorkspace
+                ? `${workspaceCountLabel(
+                    confirmWorkspace.repositoryCount,
+                  )} will move to the default workspace. The repositories stay indexed; nothing is removed from disk.`
+                : ""}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isBusy}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              onClick={handleDelete}
+              disabled={isBusy}
+            >
+              {isBusy ? "Deleting…" : "Delete workspace"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
+  );
+}
+
+export default function Settings({
+  settings,
+  workspaces = [],
+  onUpdateSettings,
+  onCreateWorkspace,
+  onUpdateWorkspace,
+  onDeleteWorkspace,
+}) {
   const settingsApi = window.electronAPI?.settings;
   const [aiForm, setAiForm] = useState({
     chatModel: "",
@@ -440,6 +712,18 @@ export default function Settings({ settings, onUpdateSettings }) {
               </Description>
             </div>
           )}
+        </Section>
+
+        <Section
+          title="Workspaces"
+          description="Workspaces scope the sidebar so repositories from different contexts stay separate. Deleting a workspace moves its repositories to the default workspace instead of removing them."
+        >
+          <WorkspaceSection
+            workspaces={workspaces}
+            onCreateWorkspace={onCreateWorkspace}
+            onUpdateWorkspace={onUpdateWorkspace}
+            onDeleteWorkspace={onDeleteWorkspace}
+          />
         </Section>
 
         <Section

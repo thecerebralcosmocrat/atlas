@@ -46,6 +46,8 @@ test("falls back to defaults with no settings file", () => {
   assert.strictEqual(settings.general.theme, "system");
   assert.strictEqual(settings.general.autoSync, true);
   assert.strictEqual(settings.general.syncIntervalMinutes, 5);
+  // Null means "no explicit choice", which resolves to the default workspace.
+  assert.strictEqual(settings.general.activeWorkspaceId, null);
   assert.strictEqual(settings.ai.apiKeySource, "none");
   assert.strictEqual(settings.ai.hasApiKey, false);
   assert.strictEqual(settings.ai.chatModel, "");
@@ -61,7 +63,12 @@ test("persists general and AI overrides across reloads", () => {
   initializeSettings(filePath);
 
   updateSettings({
-    general: { theme: "dark", autoSync: false, syncIntervalMinutes: 15 },
+    general: {
+      theme: "dark",
+      autoSync: false,
+      syncIntervalMinutes: 15,
+      activeWorkspaceId: 7,
+    },
     ai: { chatModel: "custom-model", chatApiUrl: "https://example.com/chat" },
   });
 
@@ -72,6 +79,7 @@ test("persists general and AI overrides across reloads", () => {
   assert.strictEqual(settings.general.theme, "dark");
   assert.strictEqual(settings.general.autoSync, false);
   assert.strictEqual(settings.general.syncIntervalMinutes, 15);
+  assert.strictEqual(settings.general.activeWorkspaceId, 7);
   assert.strictEqual(settings.ai.chatModel, "custom-model");
   assert.strictEqual(settings.ai.chatApiUrl, "https://example.com/chat");
 });
@@ -144,12 +152,32 @@ test("rejects invalid updates without changing the current settings", () => {
     /Auto-sync/,
   );
   assert.throws(
+    () => updateSettings({ general: { activeWorkspaceId: 1.5 } }),
+    /workspace/i,
+  );
+  assert.throws(
+    () => updateSettings({ general: { activeWorkspaceId: 0 } }),
+    /workspace/i,
+  );
+  assert.throws(
+    () => updateSettings({ general: { activeWorkspaceId: "2" } }),
+    /workspace/i,
+  );
+  assert.throws(
     () => updateSettings({ ai: { chatApiUrl: "ftp://example.com" } }),
     /http/,
   );
 
   assert.strictEqual(getPublicSettings().general.theme, "system");
   assert.strictEqual(getPublicSettings().general.syncIntervalMinutes, 5);
+  assert.strictEqual(getPublicSettings().general.activeWorkspaceId, null);
+
+  // Clearing the explicit choice is valid and falls back to the default.
+  assert.strictEqual(
+    updateSettings({ general: { activeWorkspaceId: null } }).general
+      .activeWorkspaceId,
+    null,
+  );
 });
 
 test("ignores a corrupt settings file", () => {

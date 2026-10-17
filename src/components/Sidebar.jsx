@@ -3,6 +3,7 @@ import {
   Check,
   ChevronsUpDown,
   Ellipsis,
+  FolderInput,
   GitBranch,
   Layers,
   Settings,
@@ -25,27 +26,15 @@ import {
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 import { useNavigate, useLocation } from "react-router-dom";
-
-const workspaces = [
-  {
-    name: "Personal",
-    description: "Local projects and experiments",
-  },
-  {
-    name: "Work",
-    description: "Shared team repositories",
-  },
-  {
-    name: "Archive",
-    description: "Older indexed projects",
-  },
-];
 
 function getRepositoryDescription(repository) {
   try {
@@ -57,13 +46,19 @@ function getRepositoryDescription(repository) {
 
 function RepositoryRow({
   repository,
+  workspaces = [],
   active,
   onSelect,
+  onMoveRepository,
   onRequestDeleteRepository,
 }) {
   const [isConfirmOpen, setIsConfirmOpen] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState(null);
+  // The workspace a repository is already in is not a move target.
+  const moveTargets = workspaces.filter(
+    (workspace) => workspace.id !== repository.workspaceId,
+  );
 
   const handleConfirmDelete = async (event) => {
     // The action is a dialog close button by default; hold it open until the
@@ -128,6 +123,32 @@ function RepositoryRow({
           </button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="min-w-44">
+          {moveTargets.length > 0 && (
+            <>
+              <DropdownMenuSub>
+                <DropdownMenuSubTrigger>
+                  <FolderInput />
+                  Move to workspace
+                </DropdownMenuSubTrigger>
+                <DropdownMenuSubContent>
+                  {moveTargets.map((workspace) => (
+                    <DropdownMenuItem
+                      key={workspace.id}
+                      onSelect={() =>
+                        onMoveRepository(repository.id, workspace.id).catch(
+                          (error) =>
+                            console.error("Failed to move repository:", error),
+                        )
+                      }
+                    >
+                      {workspace.name}
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuSubContent>
+              </DropdownMenuSub>
+              <DropdownMenuSeparator />
+            </>
+          )}
           <DropdownMenuItem
             variant="destructive"
             onSelect={() =>
@@ -185,13 +206,16 @@ function RepositoryRow({
 
 export default function Sidebar({
   repositories = [],
+  workspaces = [],
+  activeWorkspace = null,
   selectedRepositoryId,
   onSelectRepository,
+  onSwitchWorkspace,
+  onMoveRepository,
   onRequestDeleteRepository,
 }) {
   const navigate = useNavigate();
   const location = useLocation();
-  const [selectedWorkspace, setSelectedWorkspace] = useState(workspaces[0]);
 
   const isActiveRepository = (repository) =>
     selectedRepositoryId === repository.id &&
@@ -240,11 +264,13 @@ export default function Sidebar({
             <RepositoryRow
               key={repository.id}
               repository={repository}
+              workspaces={workspaces}
               active={isActiveRepository(repository)}
               onSelect={() => {
                 onSelectRepository(repository.id);
                 navigate("/repo?tab=overview");
               }}
+              onMoveRepository={onMoveRepository}
               onRequestDeleteRepository={onRequestDeleteRepository}
             />
           ))}
@@ -277,10 +303,16 @@ export default function Sidebar({
               </span>
               <span className="flex min-w-0 flex-1 flex-col overflow-hidden">
                 <span className="truncate text-sm font-medium text-sidebar-foreground">
-                  {selectedWorkspace.name}
+                  {activeWorkspace?.name ?? "Workspace"}
                 </span>
                 <span className="truncate text-[11px] text-muted-foreground">
-                  Workspace
+                  {activeWorkspace
+                    ? `${activeWorkspace.repositoryCount} ${
+                        activeWorkspace.repositoryCount === 1
+                          ? "repository"
+                          : "repositories"
+                      }`
+                    : "Loading…"}
                 </span>
               </span>
               <ChevronsUpDown className="size-4 flex-shrink-0 transition-transform duration-200 ease-out group-data-[state=open]/workspace:rotate-180" />
@@ -290,13 +322,21 @@ export default function Sidebar({
             <DropdownMenuLabel>Switch workspace</DropdownMenuLabel>
             <DropdownMenuSeparator />
             <DropdownMenuGroup>
+              {workspaces.length === 0 && (
+                <DropdownMenuItem disabled>Loading workspaces…</DropdownMenuItem>
+              )}
               {workspaces.map((workspace) => {
-                const active = workspace.name === selectedWorkspace.name;
+                const active = workspace.id === activeWorkspace?.id;
+                const countLabel = `${workspace.repositoryCount} ${
+                  workspace.repositoryCount === 1
+                    ? "repository"
+                    : "repositories"
+                }`;
 
                 return (
                   <DropdownMenuItem
-                    key={workspace.name}
-                    onSelect={() => setSelectedWorkspace(workspace)}
+                    key={workspace.id}
+                    onSelect={() => onSwitchWorkspace(workspace.id)}
                     className="min-h-14 gap-3 px-3 py-2"
                   >
                     <span className="min-w-0 flex-1">
@@ -304,7 +344,9 @@ export default function Sidebar({
                         {workspace.name}
                       </span>
                       <span className="block truncate text-xs text-muted-foreground">
-                        {workspace.description}
+                        {workspace.description
+                          ? `${workspace.description} · ${countLabel}`
+                          : countLabel}
                       </span>
                     </span>
                     <Check
@@ -319,6 +361,11 @@ export default function Sidebar({
                 );
               })}
             </DropdownMenuGroup>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onSelect={() => navigate("/settings")}>
+              <Settings />
+              Manage workspaces
+            </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
