@@ -31,20 +31,27 @@ const {
   answerRepositoryOwnershipQuestion,
   getOwnership,
 } = require("./query/ownership");
+const {
+  initializeSettings,
+  getPublicSettings,
+  getResolvedSettings,
+  updateSettings,
+} = require("./settings");
 
 const isDev = process.env.NODE_ENV === "development";
-const DEFAULT_NIM_API_URL = "https://integrate.api.nvidia.com/v1/chat/completions";
-const DEFAULT_NIM_MODEL = "nvidia/nemotron-3-super-120b-a12b";
 
 // Embeddings use the same NIM account as the answers. Built per use rather than
-// cached so it always sees the environment loadLocalEnv has loaded, and it
-// returns null without a key: semantic retrieval is an enhancement, so a
-// missing key must not stop indexing or answering questions.
+// cached so a change in Settings — or an environment file loaded later — takes
+// effect without a restart. It returns null without a key: semantic retrieval
+// is an enhancement, so a missing key must not stop indexing or answering
+// questions.
 function getNimEmbedder() {
+  const { ai } = getResolvedSettings();
+
   return createNimEmbedder({
-    apiKey: process.env.NVIDIA_NIM_API_KEY,
-    model: process.env.NVIDIA_NIM_EMBED_MODEL,
-    apiUrl: process.env.NVIDIA_NIM_EMBED_API_URL,
+    apiKey: ai.apiKey,
+    model: ai.embedModel,
+    apiUrl: ai.embedApiUrl,
   });
 }
 const IGNORED_DIRECTORIES = new Set([
@@ -223,13 +230,11 @@ async function backfillRepositoryIndexes(mainWindow) {
   mainWindow?.webContents?.send("repositories:changed");
 }
 
-// How often Atlas asks the remotes whether anything moved. The check is a
-// `git ls-remote`, which transfers no objects, so a short interval costs
-// almost nothing; only a repository that actually moved is fetched.
-const SYNC_INTERVAL_MS = 5 * 60 * 1000;
 // Returning to the window is the moment a user is most likely looking for fresh
 // data, so a focus check is allowed — but no more often than this, or alt-tabbing
-// would hammer the remote.
+// would hammer the remote. The periodic interval itself is a setting; the check
+// is a `git ls-remote`, which transfers no objects, so a short interval costs
+// almost nothing and only a repository that actually moved is fetched.
 const SYNC_MIN_GAP_MS = 30 * 1000;
 
 // Re-indexes a repository whose working tree just moved, either onto the remote
@@ -385,39 +390,60 @@ function summarizeSync(results) {
 }
 
 let syncTimer = null;
+let syncWindow = null;
 // Zero rather than "now" so the first focus — the window opening — runs a pass,
 // which is what picks up commits pushed while Atlas was closed.
 let lastSyncAt = 0;
+
+function runSyncPass() {
+  lastSyncAt = Date.now();
+
+  syncAllRepositories(syncWindow)
+    .then((results) => {
+      if (results.some((result) => result.changed)) {
+        syncWindow?.webContents?.send("repositories:changed");
+      }
+    })
+    .catch((error) => console.error("Repository sync failed:", error));
+}
+
+// Re-reads the auto-sync setting and replaces the timer. Called on launch and
+// whenever Settings changes, so turning sync off (or shortening the interval)
+// takes effect without a restart.
+function scheduleSyncPolling() {
+  if (syncTimer) clearInterval(syncTimer);
+  syncTimer = null;
+
+  if (!syncWindow) return;
+
+  const { autoSync, syncIntervalMinutes } = getResolvedSettings().general;
+
+  if (!autoSync) return;
+
+  syncTimer = setInterval(runSyncPass, syncIntervalMinutes * 60 * 1000);
+  // The poller is a convenience, not a reason for the process to stay alive.
+  syncTimer.unref?.();
+}
 
 // Starts the background checks. A pass is not run here directly: the timer and
 // the window focus both call one, and the opening focus covers startup without
 // making launch wait on the network.
 function startSyncPoller(mainWindow) {
-  const pass = () => {
-    lastSyncAt = Date.now();
-
-    syncAllRepositories(mainWindow)
-      .then((results) => {
-        if (results.some((result) => result.changed)) {
-          mainWindow?.webContents?.send("repositories:changed");
-        }
-      })
-      .catch((error) => console.error("Repository sync failed:", error));
-  };
-
-  syncTimer = setInterval(pass, SYNC_INTERVAL_MS);
-  // The poller is a convenience, not a reason for the process to stay alive.
-  syncTimer.unref?.();
+  syncWindow = mainWindow;
 
   mainWindow?.on?.("focus", () => {
+    if (!getResolvedSettings().general.autoSync) return;
     if (Date.now() - lastSyncAt < SYNC_MIN_GAP_MS) return;
-    pass();
+    runSyncPass();
   });
 
   mainWindow?.on?.("closed", () => {
     if (syncTimer) clearInterval(syncTimer);
     syncTimer = null;
+    syncWindow = null;
   });
+
+  scheduleSyncPolling();
 }
 
 // Brings one repository level with its remote even though it has local edits,
@@ -681,9 +707,11 @@ function buildRepositoryContext({
 }
 
 async function answerWithNim(repositoryContext, question) {
-  const apiKey = process.env.NVIDIA_NIM_API_KEY;
-  const apiUrl = process.env.NVIDIA_NIM_API_URL || DEFAULT_NIM_API_URL;
-  const model = process.env.NVIDIA_NIM_MODEL || DEFAULT_NIM_MODEL;
+  const {
+    apiKey,
+    chatApiUrl: apiUrl,
+    chatModel: model,
+  } = getResolvedSettings().ai;
 
   if (!apiKey) {
     return null;
@@ -799,7 +827,195 @@ function answerRepositoryQuestion(
   return `Here is what I can tell from the indexed repository:\n\n${intro}\n\nUseful entry points are ${topFiles.map((name) => `\`${name}\``).join(", ") || "the top-level files"} and ${topDirectories.map((name) => `\`${name}\``).join(", ") || "the top-level folders"}. Ask me things like "How do I run this?", "What should I read first?", or "What stack does this use?"`;
 }
 
+const AI_TEST_TIMEOUT_MS = 15 * 1000;
+
+function truncateText(value, limit = 300) {
+  const text = typeof value === "string" ? value : JSON.stringify(value);
+
+  return text.length > limit ? `${text.slice(0, limit)}…` : text;
+}
+
+async function postAiRequest({ url, apiKey, body }) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), AI_TEST_TIMEOUT_MS);
+
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      signal: controller.signal,
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+    });
+    const text = await response.text();
+
+    if (!response.ok) {
+      throw new Error(`${response.status} ${truncateText(text)}`);
+    }
+
+    try {
+      return JSON.parse(text);
+    } catch {
+      throw new Error("The provider returned a response that was not JSON.");
+    }
+  } catch (error) {
+    if (error.name === "AbortError") {
+      throw new Error("The provider did not respond in time.");
+    }
+
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+// A settings save that leaves a typo'd key, model, or URL behind is the exact
+// failure this page exists to prevent, so the check exercises both requests the
+// app actually makes: a small chat completion and an embedding.
+async function testAiConnection() {
+  const { ai } = getResolvedSettings();
+
+  if (!ai.apiKey) {
+    return {
+      ok: false,
+      error:
+        "No API key configured. Add one above, or set NVIDIA_NIM_API_KEY.",
+      chat: null,
+      embeddings: null,
+    };
+  }
+
+  const [chat, embeddings] = await Promise.all([
+    postAiRequest({
+      url: ai.chatApiUrl,
+      apiKey: ai.apiKey,
+      body: {
+        model: ai.chatModel,
+        temperature: 0,
+        max_tokens: 5,
+        messages: [{ role: "user", content: "Reply with OK." }],
+      },
+    })
+      .then(() => ({ ok: true, message: "Chat model responded." }))
+      .catch((error) => ({ ok: false, error: error.message })),
+    postAiRequest({
+      url: ai.embedApiUrl,
+      apiKey: ai.apiKey,
+      body: {
+        model: ai.embedModel,
+        input: ["Atlas connection test"],
+        input_type: "query",
+      },
+    })
+      .then((payload) => {
+        const dimensions = payload?.data?.[0]?.embedding?.length;
+
+        if (!dimensions) {
+          throw new Error("The embeddings endpoint returned no vector.");
+        }
+
+        return {
+          ok: true,
+          message: `Embedding model responded (${dimensions} dimensions).`,
+        };
+      })
+      .catch((error) => ({ ok: false, error: error.message })),
+  ]);
+
+  return { ok: chat.ok && embeddings.ok, chat, embeddings };
+}
+
+async function getDirectorySize(directoryPath) {
+  let entries;
+  let total = 0;
+
+  try {
+    entries = await fs.readdir(directoryPath, { withFileTypes: true });
+  } catch {
+    return 0;
+  }
+
+  for (const entry of entries) {
+    const entryPath = path.join(directoryPath, entry.name);
+
+    if (entry.isDirectory()) {
+      total += await getDirectorySize(entryPath);
+      continue;
+    }
+
+    try {
+      total += (await fs.stat(entryPath)).size;
+    } catch {
+      // A file that vanished mid-walk is not worth failing the page over.
+    }
+  }
+
+  return total;
+}
+
+async function getStorageInfo() {
+  const { atlasRoot, repositoriesRoot } = getAtlasPaths();
+  const databasePath = path.join(atlasRoot, "atlas.db");
+  let databaseBytes = 0;
+
+  // WAL and SHM only exist while the database is open and writes are pending;
+  // a missing one is simply zero bytes.
+  for (const suffix of ["", "-wal", "-shm"]) {
+    try {
+      databaseBytes += (await fs.stat(`${databasePath}${suffix}`)).size;
+    } catch {
+      // Ignore missing database sidecar files.
+    }
+  }
+
+  return {
+    dataPath: atlasRoot,
+    databaseBytes,
+    repositoriesBytes: await getDirectorySize(repositoriesRoot),
+    repositoryCount: listRepositories().length,
+  };
+}
+
 function registerIpcHandlers() {
+  ipcMain.handle("settings:get", async () => {
+    return getPublicSettings();
+  });
+
+  ipcMain.handle("settings:set", async (event, patch) => {
+    const updated = updateSettings(patch);
+    const mainWindow = BrowserWindow.fromWebContents(event.sender);
+
+    // Apply the parts of the change the main process owns, then tell the
+    // renderer so every open view re-reads the new values.
+    applyThemeToWindow(mainWindow);
+    scheduleSyncPolling();
+    mainWindow?.webContents?.send("settings:changed", updated);
+
+    return updated;
+  });
+
+  ipcMain.handle("settings:test-connection", async () => {
+    return testAiConnection();
+  });
+
+  ipcMain.handle("settings:storage-info", async () => {
+    return getStorageInfo();
+  });
+
+  ipcMain.handle("settings:open-storage", async () => {
+    const { shell } = require("electron");
+    const { atlasRoot } = getAtlasPaths();
+    const error = await shell.openPath(atlasRoot);
+
+    if (error) {
+      throw new Error(error);
+    }
+
+    return { path: atlasRoot };
+  });
+
   ipcMain.handle("repositories:list", async () => {
     return listRepositories();
   });
@@ -1056,6 +1272,32 @@ function registerIpcHandlers() {
   });
 }
 
+// Keeps the native titlebar symbols legible against the renderer's theme. The
+// renderer applies the `.dark` class itself; nativeTheme makes native surfaces
+// (dialogs, menus) follow the same choice.
+function applyThemeToWindow(win) {
+  const { theme } = getResolvedSettings().general;
+  let nativeTheme = null;
+
+  try {
+    nativeTheme = require("electron").nativeTheme ?? null;
+  } catch {
+    // Tests run without a full Electron runtime.
+  }
+
+  if (nativeTheme) {
+    nativeTheme.themeSource = theme;
+  }
+
+  const prefersDark =
+    theme === "dark" || (theme === "system" && nativeTheme?.shouldUseDarkColors);
+
+  win?.setTitleBarOverlay?.({
+    color: "rgba(0,0,0,0)",
+    symbolColor: prefersDark ? "#ffffff" : "#1a1a1a",
+  });
+}
+
 function createWindow() {
   const win = new BrowserWindow({
     width: 1280,
@@ -1065,7 +1307,9 @@ function createWindow() {
     titleBarStyle: "hidden",
     titleBarOverlay: {
       color: "rgba(0,0,0,0)",
-      symbolColor: "#ffffff",
+      // Replaced by applyThemeToWindow as soon as the window exists; this
+      // matches the light theme the renderer starts in.
+      symbolColor: "#1a1a1a",
     },
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
@@ -1089,10 +1333,14 @@ function createWindow() {
 app.whenReady().then(async () => {
   await loadLocalEnv();
   const { atlasRoot } = await ensureAtlasStorage();
+  // Loaded before the window so the saved theme and sync policy apply from the
+  // first frame rather than being corrected after the renderer mounts.
+  initializeSettings(path.join(atlasRoot, "settings.json"));
   initializeDatabase(path.join(atlasRoot, "atlas.db"));
   await migrateLegacyRepositories();
   registerIpcHandlers();
   const mainWindow = createWindow();
+  applyThemeToWindow(mainWindow);
   // Fire-and-forget: indexing must not stop the window from appearing.
   backfillRepositoryIndexes(mainWindow).catch((error) =>
     console.error("Repository index backfill failed:", error),

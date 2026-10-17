@@ -35,6 +35,7 @@ answers questions about the code.
 | 1 — Make the app functional | Add a repo, watch it index, browse files, ask grounded questions | I0–I6 | done |
 | 2 — Code graph + RAG | Explore how files, symbols, and imports connect; retrieve answers by meaning, not keywords | I7–I8 | done |
 | 3 — Onboarding intelligence | A generated "start here" path plus impact and ownership answers for an unfamiliar codebase | I9–I11 | done |
+| 4 — Personal workspaces and settings | Global settings, then named workspaces that scope the sidebar | I12–I13 | in progress |
 
 Phase 2 was never written down as its own section — the original draft deferred
 "code graph + RAG" as Phase 3 while the chat-grounding work (I5) and add/index
@@ -315,6 +316,70 @@ grounded in the history the app already cloned.
   top contributors).
 - Tests: `test/ownership.test.js`, including a shallow clone deepened end to
   end from a local origin.
+
+## Phase 4 — Personal workspaces and settings
+
+Phase 4 makes the app configurable and lets one install carry more than one
+context. Settings is deliberately global rather than per workspace: the provider
+account and sync policy belong to the person using Atlas, and switching a
+workspace must not silently switch which API key answers a question.
+
+| # | Increment | State |
+|---|---|---|
+| I12 | Global settings | done |
+| I13 | Workspaces/profiles | planned |
+
+### I12 — Global settings
+
+The Settings page replaces environment-only configuration that left packaged
+builds unable to reach the model at all: `loadLocalEnv` returns early outside
+development, so there was no supported way to set a key in a built app.
+
+- Persistence: `electron/settings.js` writes `settings.json` beside the SQLite
+  database in `atlas-data`. Writes go through a temp file and an atomic rename,
+  and a corrupt file falls back to defaults instead of blocking startup.
+  `electron-store` is not used: v11 is ESM-only, while the main process and the
+  test harness are CommonJS.
+- Secrets: the NVIDIA NIM key is encrypted with Electron `safeStorage` when
+  available, with plain text only as a fallback on platforms without it. The IPC
+  payload reports `hasApiKey` and `apiKeySource` (`settings`, `environment`, or
+  `none`) but never the key itself.
+- Precedence: a saved value beats an environment variable, which beats the
+  built-in default. This keeps `.env` working for development while making an
+  explicit choice in the UI actually take effect. Clearing an AI field or the
+  key removes the override and falls back down that chain.
+- Runtime wiring: `electron/main.js` resolves the chat and embedding
+  configuration per use, so changes apply without a restart. The sync poller
+  re-reads `autoSync`/`syncIntervalMinutes` and replaces its timer, and
+  `nativeTheme` plus the titlebar overlay follow the saved theme.
+- IPC: `settings:get`, `settings:set`, `settings:test-connection`,
+  `settings:storage-info`, and `settings:open-storage`. The connection test
+  saves the draft first, then exercises both the chat and embedding endpoints,
+  because a silently wrong key or model is the failure this page prevents.
+- UI: `src/pages/Settings.jsx` (Appearance, Sync, AI provider, Storage), routed
+  at `/settings` and reachable from the sidebar. The renderer applies the
+  `.dark` class from the saved theme and follows `prefers-color-scheme` when the
+  choice is "system".
+- Tests: `test/settings.test.js` covers defaults, persistence, key handling
+  without leaking the secret, environment precedence, clearing overrides,
+  validation, corrupt files, and the main-process IPC wiring.
+- Environment variables remain supported and documented in `.env.example`; the
+  settings page is the supported path for packaged builds.
+
+### I13 — Workspaces/profiles
+
+The sidebar's Personal/Work/Archive switcher is still a hardcoded list that only
+changes a label. This increment makes it real:
+
+- A `workspaces` table plus a nullable `repos.workspace_id`, with a default
+  workspace created on first launch so existing repositories remain visible.
+- The add flow assigns new repositories to the active workspace; a repo action
+  moves an existing one.
+- The sidebar shows repositories for the selected workspace only, and the
+  selection persists by reusing the I12 settings store.
+- Creating, renaming, and deleting workspaces lives on the Settings page.
+  Deleting a workspace moves its repositories to the default workspace rather
+  than deleting indexed data.
 
 ## Testing
 

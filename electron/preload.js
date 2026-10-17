@@ -1,6 +1,20 @@
 const { contextBridge, ipcRenderer } = require("electron");
 
 contextBridge.exposeInMainWorld("electronAPI", {
+  settings: {
+    get: () => ipcRenderer.invoke("settings:get"),
+    set: (patch) => ipcRenderer.invoke("settings:set", patch),
+    testConnection: () => ipcRenderer.invoke("settings:test-connection"),
+    storageInfo: () => ipcRenderer.invoke("settings:storage-info"),
+    openStorageFolder: () => ipcRenderer.invoke("settings:open-storage"),
+    onChanged: (callback) => {
+      const subscription = (event, value) => callback(value);
+      ipcRenderer.on("settings:changed", subscription);
+      return () => {
+        ipcRenderer.removeListener("settings:changed", subscription);
+      };
+    },
+  },
   graph: {
     get: (repositoryId) =>
       ipcRenderer.invoke("get-graph", { repoId: repositoryId }),

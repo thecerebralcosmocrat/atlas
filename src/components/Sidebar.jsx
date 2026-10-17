@@ -194,7 +194,10 @@ export default function Sidebar({
   const [selectedWorkspace, setSelectedWorkspace] = useState(workspaces[0]);
 
   const isActiveRepository = (repository) =>
-    selectedRepositoryId === repository.id && location.pathname !== "/";
+    selectedRepositoryId === repository.id &&
+    location.pathname !== "/" &&
+    location.pathname !== "/settings";
+  const isSettingsActive = location.pathname === "/settings";
 
   return (
     <aside className="flex min-h-0 w-[240px] flex-shrink-0 flex-col overflow-hidden border-e border-sidebar-border bg-sidebar">
@@ -251,7 +254,14 @@ export default function Sidebar({
       <div className="mt-auto flex shrink-0 flex-col gap-1 border-t border-sidebar-border p-3">
         <button
           type="button"
-          className="flex min-h-10 w-full items-center gap-3 rounded-none px-3 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sidebar-ring"
+          onClick={() => navigate("/settings")}
+          aria-current={isSettingsActive ? "page" : undefined}
+          className={cn(
+            "flex min-h-10 w-full items-center gap-3 rounded-none px-3 py-2 text-sm font-medium transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sidebar-ring",
+            isSettingsActive
+              ? "bg-sidebar-accent text-sidebar-foreground"
+              : "text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground",
+          )}
         >
           <Settings className="size-4" />
           Settings
