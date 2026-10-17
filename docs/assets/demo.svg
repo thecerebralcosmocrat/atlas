@@ -1,0 +1,93 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720" role="img" aria-label="Atlas repository chat, start-here path, impact, and ownership panels">
+  <defs>
+    <linearGradient id="shell" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#101014"/>
+      <stop offset="1" stop-color="#0c0c10"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1280" height="720" fill="#09090b"/>
+
+  <rect x="48" y="44" width="1184" height="632" rx="12" fill="url(#shell)" stroke="#27272a"/>
+
+  <g fill="#3f3f46">
+    <circle cx="72" cy="66" r="5"/>
+    <circle cx="92" cy="66" r="5"/>
+    <circle cx="112" cy="66" r="5"/>
+  </g>
+  <text x="640" y="70" text-anchor="middle" font-family="ui-sans-serif, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" fill="#71717a">Atlas</text>
+
+  <rect x="49" y="89" width="252" height="586" fill="#0b0b0f"/>
+  <path d="M301 89V675" stroke="#1f1f24"/>
+
+  <text x="76" y="132" font-family="ui-sans-serif, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="21" font-weight="700" letter-spacing="-0.6" fill="#f4f4f5">Atlas</text>
+  <text x="76" y="174" font-family="ui-sans-serif, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" fill="#a1a1aa">+  Add repository</text>
+
+  <rect x="64" y="188" width="222" height="34" rx="4" fill="#1b1b22" stroke="#2a2a32"/>
+  <text x="80" y="210" font-family="ui-sans-serif, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" fill="#f4f4f5">atlas</text>
+  <text x="80" y="254" font-family="ui-sans-serif, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" fill="#a1a1aa">next.js</text>
+  <text x="80" y="282" font-family="ui-sans-serif, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" fill="#a1a1aa">react</text>
+
+  <path d="M64 580H286" stroke="#1f1f24"/>
+  <text x="76" y="620" font-family="ui-sans-serif, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" fill="#a1a1aa">Settings</text>
+
+  <g font-family="ui-sans-serif, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13">
+    <text x="332" y="112" fill="#71717a">Overview</text>
+    <text x="420" y="112" fill="#f4f4f5">Ask</text>
+    <text x="490" y="112" fill="#71717a">Files</text>
+    <text x="560" y="112" fill="#71717a">Graph</text>
+    <text x="635" y="112" fill="#71717a">Analyze</text>
+  </g>
+  <rect x="414" y="124" width="28" height="2" fill="#f4f4f5"/>
+  <path d="M301 126H1232" stroke="#1f1f24"/>
+
+  <rect x="332" y="150" width="860" height="58" rx="6" fill="#15151b" stroke="#2a2a32"/>
+  <text x="352" y="174" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="9" letter-spacing="1.4" fill="#71717a">YOU</text>
+  <text x="352" y="195" font-family="ui-sans-serif, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="15" fill="#f4f4f5">Where should I start in this codebase?</text>
+
+  <rect x="332" y="226" width="860" height="196" rx="6" fill="#101015" stroke="#222229"/>
+  <text x="352" y="252" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="9" letter-spacing="1.4" fill="#5eead4">ATLAS</text>
+  <g font-family="ui-sans-serif, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" fill="#d4d4d8">
+    <text x="352" y="282">Start at src/main.jsx, then follow the app shell into App.jsx.</text>
+    <text x="352" y="304">The most-imported modules after that are Sidebar and Repository.</text>
+  </g>
+
+  <g font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="11" fill="#8b9dff">
+    <rect x="352" y="326" width="152" height="24" rx="4" fill="#1c1c24" stroke="#31313b"/>
+    <text x="362" y="342">src/main.jsx:1-24</text>
+    <rect x="516" y="326" width="190" height="24" rx="4" fill="#1c1c24" stroke="#31313b"/>
+    <text x="526" y="342">electron/main.js:1333</text>
+    <rect x="718" y="326" width="146" height="24" rx="4" fill="#1c1c24" stroke="#31313b"/>
+    <text x="728" y="342">src/App.jsx:21-81</text>
+  </g>
+
+  <text x="352" y="382" font-family="ui-sans-serif, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="11" fill="#71717a">Ranked from 412 indexed files, the import graph, and semantic retrieval.</text>
+
+  <g>
+    <rect x="332" y="448" width="272" height="152" rx="6" fill="#101015" stroke="#222229"/>
+    <text x="350" y="480" font-family="ui-sans-serif, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="600" fill="#f4f4f5">Start here</text>
+    <g font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="11" fill="#a1a1aa">
+      <text x="350" y="508">1  src/main.jsx</text>
+      <text x="350" y="530">2  src/App.jsx</text>
+      <text x="350" y="552">3  src/components/Sidebar.jsx</text>
+    </g>
+  </g>
+
+  <g>
+    <rect x="620" y="448" width="272" height="152" rx="6" fill="#101015" stroke="#222229"/>
+    <text x="638" y="480" font-family="ui-sans-serif, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="600" fill="#f4f4f5">Impact</text>
+    <text x="638" y="524" font-family="ui-sans-serif, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="30" font-weight="700" fill="#f4f4f5">12</text>
+    <text x="680" y="524" font-family="ui-sans-serif, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" fill="#a1a1aa">files in the blast radius</text>
+    <text x="638" y="552" font-family="ui-sans-serif, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="11" fill="#71717a">direct importers + transitive</text>
+  </g>
+
+  <g>
+    <rect x="908" y="448" width="272" height="152" rx="6" fill="#101015" stroke="#222229"/>
+    <text x="926" y="480" font-family="ui-sans-serif, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="600" fill="#f4f4f5">Ownership</text>
+    <text x="926" y="510" font-family="ui-sans-serif, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" fill="#d4d4d8">A. Sivaramakrishnan</text>
+    <text x="926" y="530" font-family="ui-sans-serif, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="11" fill="#71717a">43 commits over 19 files</text>
+    <text x="926" y="556" font-family="ui-sans-serif, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="11" fill="#71717a">last change 2 days ago</text>
+  </g>
+
+  <text x="332" y="650" font-family="ui-sans-serif, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="11" fill="#52525b">412 files · 1,204 symbols · synced 1 minute ago</text>
+</svg>

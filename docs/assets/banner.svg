@@ -1,0 +1,58 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="360" viewBox="0 0 1280 360" role="img" aria-label="Atlas — onboarding for unfamiliar codebases">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#09090b"/>
+      <stop offset="1" stop-color="#15151c"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#8b9dff"/>
+      <stop offset="1" stop-color="#5eead4"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.78" cy="0.5" r="0.45">
+      <stop offset="0" stop-color="#8b9dff" stop-opacity="0.16"/>
+      <stop offset="1" stop-color="#8b9dff" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <rect width="1280" height="360" fill="url(#bg)"/>
+  <rect width="1280" height="360" fill="url(#glow)"/>
+
+  <g stroke="#ffffff" stroke-opacity="0.04" stroke-width="1">
+    <path d="M0 60H1280M0 120H1280M0 180H1280M0 240H1280M0 300H1280"/>
+    <path d="M80 0V360M160 0V360M240 0V360M320 0V360M400 0V360M480 0V360M560 0V360M640 0V360M720 0V360M800 0V360M880 0V360M960 0V360M1040 0V360M1120 0V360M1200 0V360"/>
+  </g>
+
+  <g fill="none" stroke="#8b9dff" stroke-opacity="0.38" stroke-width="1.5">
+    <path d="M868 190 L968 104"/>
+    <path d="M868 190 L984 262"/>
+    <path d="M968 104 L1086 168"/>
+    <path d="M984 262 L1086 168"/>
+    <path d="M1086 168 L1162 268"/>
+    <path d="M968 104 L1188 96"/>
+    <path d="M1086 168 L1188 96"/>
+    <path d="M1162 268 L1188 96"/>
+  </g>
+
+  <g>
+    <circle cx="868" cy="190" r="7" fill="#5eead4"/>
+    <circle cx="968" cy="104" r="5" fill="#8b9dff"/>
+    <circle cx="984" cy="262" r="5" fill="#8b9dff"/>
+    <circle cx="1086" cy="168" r="8" fill="#f4f4f5"/>
+    <circle cx="1162" cy="268" r="5" fill="#8b9dff"/>
+    <circle cx="1188" cy="96" r="5" fill="#5eead4"/>
+  </g>
+  <g fill="#8b9dff" fill-opacity="0.5">
+    <circle cx="868" cy="190" r="15"/>
+    <circle cx="1086" cy="168" r="16"/>
+  </g>
+  <g fill="#09090b">
+    <circle cx="868" cy="190" r="7"/>
+    <circle cx="1086" cy="168" r="8"/>
+  </g>
+
+  <text x="76" y="178" font-family="ui-sans-serif, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="104" font-weight="700" letter-spacing="-4" fill="#f4f4f5">Atlas</text>
+  <text x="80" y="224" font-family="ui-sans-serif, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="24" fill="#a1a1aa">Onboarding for unfamiliar codebases.</text>
+  <text x="82" y="264" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="14" letter-spacing="2.4" fill="#71717a">CLONE / INDEX / ASK / UNDERSTAND</text>
+
+  <rect x="80" y="292" width="132" height="3" rx="1.5" fill="url(#accent)"/>
+</svg>
