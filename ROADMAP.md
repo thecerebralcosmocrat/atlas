@@ -35,7 +35,7 @@ answers questions about the code.
 | 1 — Make the app functional | Add a repo, watch it index, browse files, ask grounded questions | I0–I6 | done |
 | 2 — Code graph + RAG | Explore how files, symbols, and imports connect; retrieve answers by meaning, not keywords | I7–I8 | done |
 | 3 — Onboarding intelligence | A generated "start here" path plus impact and ownership answers for an unfamiliar codebase | I9–I11 | done |
-| 4 — Personal workspaces and settings | Global settings, then named workspaces that scope the sidebar | I12–I13 | done |
+| 4 — Personal workspaces and settings | Global settings, then named workspaces that scope the sidebar, then profiles that own their own configuration | I12–I14 | I12–I13 done, I14 implemented, pending manual restart check |
 
 Phase 2 was never written down as its own section — the original draft deferred
 "code graph + RAG" as Phase 3 while the chat-grounding work (I5) and add/index
@@ -320,14 +320,17 @@ grounded in the history the app already cloned.
 ## Phase 4 — Personal workspaces and settings
 
 Phase 4 makes the app configurable and lets one install carry more than one
-context. Settings is deliberately global rather than per workspace: the provider
-account and sync policy belong to the person using Atlas, and switching a
-workspace must not silently switch which API key answers a question.
+context. I12–I13 shipped settings as deliberately global: one provider account
+and one sync policy for the whole install, with workspaces scoping only the
+sidebar. I14 supersedes that decision. A profile is the single scoping concept
+and owns both its repositories and its configuration, so switching profiles
+switches them together and never lets one profile's API key answer for another.
 
 | # | Increment | State |
 |---|---|---|
 | I12 | Global settings | done |
-| I13 | Workspaces/profiles | done |
+| I13 | Workspaces (repository scoping only) | done |
+| I14 | Profiles: workspaces evolve into profiles that own their settings | implemented, pending manual restart check |
 
 ### I12 — Global settings
 
@@ -366,7 +369,7 @@ development, so there was no supported way to set a key in a built app.
 - Environment variables remain supported and documented in `.env.example`; the
   settings page is the supported path for packaged builds.
 
-### I13 — Workspaces/profiles
+### I13 — Workspaces
 
 The sidebar's Personal/Work/Archive switcher was a hardcoded list that only
 changed a label. This increment makes it real:
@@ -403,6 +406,61 @@ changed a label. This increment makes it real:
   default (including files surviving), and indexer fallback behavior.
   `test/schema.test.js` and `test/settings.test.js` cover the migration columns
   and the new setting's defaults, persistence, and validation.
+
+### I14 — Profiles with persistence
+
+I13 introduced named workspaces but left theme, sync policy and AI configuration
+global. I14 makes the workspace a first-class **profile** that owns all of that.
+Decision (confirmed): profiles **replace** workspaces one-for-one rather than
+adding a layer above them (profile → workspaces → repositories). There is one
+scoping concept; a repository belongs to exactly one profile.
+
+- Schema: the `workspaces` table and `repos.workspace_id` keep their names to
+  keep migration risk low; the code, IPC and UI now say "profile". A new
+  `profile_settings` table (one row per profile id) holds theme, auto-sync and
+  interval, the four AI model/endpoint overrides, and the API key (encrypted
+  with `safeStorage` when available). A profile with no row uses defaults; rows
+  are created on first save.
+- Install-wide state: `settings.json` is now version 2 and holds only
+  `activeProfileId` (and is where future install-wide options such as the data
+  path or update behavior belong). A stale id falls back to the default profile
+  on every read; deleting the active profile persists the fallback explicitly.
+- Data layer: `electron/db/profiles.js` (renamed from `workspaces.js`) keeps the
+  same validation: names trimmed, 60 characters max, unique case-insensitively
+  with readable errors. Deleting a profile moves its repositories to the default
+  and deletes its settings row, including its key, in one transaction. The
+  default profile cannot be deleted.
+- Settings module: `getResolvedSettings`/`getPublicSettings`/`updateSettings`
+  keep their shapes but act on the active profile; `setActiveProfile` switches.
+  The renderer only receives `hasApiKey` and `apiKeySource`. A settings patch
+  cannot switch profiles.
+- Switching: `profiles:switch` persists the selection, then re-applies theme,
+  reschedules the sync timer, and broadcasts `settings:changed`,
+  `profiles:changed` and `repositories:changed` together. The sync poller and
+  "Refresh now" now cover the active profile's repositories only, so the sync
+  policy a profile owns is the one that applies to its own repositories.
+- Migration (version 1 → 2): on first launch after upgrade, the old global
+  theme, sync policy and model/endpoint overrides are copied to every profile
+  that already existed, so behavior is unchanged. The API key is copied to the
+  **default profile only**, never into other profiles. `settings.json` is then
+  rewritten without the per-profile fields or the key. The database write
+  happens first and never overwrites an existing row, so an interrupted
+  migration finishes on the next launch. The old `general.activeWorkspaceId`
+  becomes `activeProfileId`.
+- Environment fallback: `NVIDIA_NIM_*` variables remain an install-wide
+  fallback for any profile without its own value. `apiKeySource` reports
+  `environment` when that is what is in effect, so a shared key is never silent.
+- Known limitation: a background re-index that is already running when the user
+  switches profiles resolves AI settings at call time, so its embedding
+  requests may use the new active profile's key and models. Retrieval degrades
+  safely (lexical fallback, model-tagged chunks), and nothing is shared back.
+- Tests: `test/profiles.test.js` (renamed from `workspaces.test.js`),
+  `test/profiles-settings.test.js` (isolation, persistence across
+  re-initialization, stale id, deletion removing settings and keys, migration
+  including crash recovery), `test/profiles.integration.test.js` (IPC lifecycle,
+  validation errors, switching, restart, key non-disclosure, active-profile
+  deletion broadcast, migration on launch), plus updates to `settings.test.js`
+  and `schema.test.js`.
 
 ## Testing
 

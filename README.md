@@ -192,8 +192,9 @@ no network access is required.
 
 Atlas is built in small vertical slices. Phase 1 (a working repository Q&A app),
 Phase 2 (symbol graph and retrieval), and Phase 3 (start-here, impact, and
-ownership) are complete. Phase 4 is in progress: global settings shipped, and
-named workspaces that scope the sidebar are planned.
+ownership) are complete. Phase 4 is nearly done: settings and workspaces
+shipped, and profiles (workspaces that also own their theme, sync policy, and AI
+provider configuration) are implemented pending a manual restart check.
 
 See [ROADMAP.md](ROADMAP.md) for the increments, decisions, and implementation
 notes.

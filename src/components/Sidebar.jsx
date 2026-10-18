@@ -46,7 +46,7 @@ function getRepositoryDescription(repository) {
 
 function RepositoryRow({
   repository,
-  workspaces = [],
+  profiles = [],
   active,
   onSelect,
   onMoveRepository,
@@ -55,9 +55,9 @@ function RepositoryRow({
   const [isConfirmOpen, setIsConfirmOpen] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState(null);
-  // The workspace a repository is already in is not a move target.
-  const moveTargets = workspaces.filter(
-    (workspace) => workspace.id !== repository.workspaceId,
+  // The profile a repository is already in is not a move target.
+  const moveTargets = profiles.filter(
+    (profile) => profile.id !== repository.workspaceId,
   );
 
   const handleConfirmDelete = async (event) => {
@@ -128,20 +128,20 @@ function RepositoryRow({
               <DropdownMenuSub>
                 <DropdownMenuSubTrigger>
                   <FolderInput />
-                  Move to workspace
+                  Move to profile
                 </DropdownMenuSubTrigger>
                 <DropdownMenuSubContent>
-                  {moveTargets.map((workspace) => (
+                  {moveTargets.map((profile) => (
                     <DropdownMenuItem
-                      key={workspace.id}
+                      key={profile.id}
                       onSelect={() =>
-                        onMoveRepository(repository.id, workspace.id).catch(
+                        onMoveRepository(repository.id, profile.id).catch(
                           (error) =>
                             console.error("Failed to move repository:", error),
                         )
                       }
                     >
-                      {workspace.name}
+                      {profile.name}
                     </DropdownMenuItem>
                   ))}
                 </DropdownMenuSubContent>
@@ -206,11 +206,11 @@ function RepositoryRow({
 
 export default function Sidebar({
   repositories = [],
-  workspaces = [],
-  activeWorkspace = null,
+  profiles = [],
+  activeProfile = null,
   selectedRepositoryId,
   onSelectRepository,
-  onSwitchWorkspace,
+  onSwitchProfile,
   onMoveRepository,
   onRequestDeleteRepository,
 }) {
@@ -264,7 +264,7 @@ export default function Sidebar({
             <RepositoryRow
               key={repository.id}
               repository={repository}
-              workspaces={workspaces}
+              profiles={profiles}
               active={isActiveRepository(repository)}
               onSelect={() => {
                 onSelectRepository(repository.id);
@@ -296,56 +296,56 @@ export default function Sidebar({
           <DropdownMenuTrigger asChild>
             <button
               type="button"
-              className="group/workspace flex min-h-12 w-full items-center gap-3 rounded-none px-3 py-2 text-start text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sidebar-ring data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-foreground"
+              className="group/profile flex min-h-12 w-full items-center gap-3 rounded-none px-3 py-2 text-start text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sidebar-ring data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-foreground"
             >
               <span className="flex size-8 flex-shrink-0 items-center justify-center rounded-none bg-sidebar-primary text-sidebar-primary-foreground">
                 <Layers className="size-4" />
               </span>
               <span className="flex min-w-0 flex-1 flex-col overflow-hidden">
                 <span className="truncate text-sm font-medium text-sidebar-foreground">
-                  {activeWorkspace?.name ?? "Workspace"}
+                  {activeProfile?.name ?? "Profile"}
                 </span>
                 <span className="truncate text-[11px] text-muted-foreground">
-                  {activeWorkspace
-                    ? `${activeWorkspace.repositoryCount} ${
-                        activeWorkspace.repositoryCount === 1
+                  {activeProfile
+                    ? `${activeProfile.repositoryCount} ${
+                        activeProfile.repositoryCount === 1
                           ? "repository"
                           : "repositories"
                       }`
                     : "Loading…"}
                 </span>
               </span>
-              <ChevronsUpDown className="size-4 flex-shrink-0 transition-transform duration-200 ease-out group-data-[state=open]/workspace:rotate-180" />
+              <ChevronsUpDown className="size-4 flex-shrink-0 transition-transform duration-200 ease-out group-data-[state=open]/profile:rotate-180" />
             </button>
           </DropdownMenuTrigger>
           <DropdownMenuContent side="top" align="start" sideOffset={8}>
-            <DropdownMenuLabel>Switch workspace</DropdownMenuLabel>
+            <DropdownMenuLabel>Switch profile</DropdownMenuLabel>
             <DropdownMenuSeparator />
             <DropdownMenuGroup>
-              {workspaces.length === 0 && (
-                <DropdownMenuItem disabled>Loading workspaces…</DropdownMenuItem>
+              {profiles.length === 0 && (
+                <DropdownMenuItem disabled>Loading profiles…</DropdownMenuItem>
               )}
-              {workspaces.map((workspace) => {
-                const active = workspace.id === activeWorkspace?.id;
-                const countLabel = `${workspace.repositoryCount} ${
-                  workspace.repositoryCount === 1
+              {profiles.map((profile) => {
+                const active = profile.id === activeProfile?.id;
+                const countLabel = `${profile.repositoryCount} ${
+                  profile.repositoryCount === 1
                     ? "repository"
                     : "repositories"
                 }`;
 
                 return (
                   <DropdownMenuItem
-                    key={workspace.id}
-                    onSelect={() => onSwitchWorkspace(workspace.id)}
+                    key={profile.id}
+                    onSelect={() => onSwitchProfile(profile.id)}
                     className="min-h-14 gap-3 px-3 py-2"
                   >
                     <span className="min-w-0 flex-1">
                       <span className="block truncate text-sm font-medium">
-                        {workspace.name}
+                        {profile.name}
                       </span>
                       <span className="block truncate text-xs text-muted-foreground">
-                        {workspace.description
-                          ? `${workspace.description} · ${countLabel}`
+                        {profile.description
+                          ? `${profile.description} · ${countLabel}`
                           : countLabel}
                       </span>
                     </span>
@@ -364,7 +364,7 @@ export default function Sidebar({
             <DropdownMenuSeparator />
             <DropdownMenuItem onSelect={() => navigate("/settings")}>
               <Settings />
-              Manage workspaces
+              Manage profiles
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>

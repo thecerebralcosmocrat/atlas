@@ -127,33 +127,33 @@ function Description({ children, tone = "muted" }) {
   );
 }
 
-function workspaceCountLabel(count) {
+function profileCountLabel(count) {
   return `${count} ${count === 1 ? "repository" : "repositories"}`;
 }
 
-// Workspaces scope the sidebar. They are managed here rather than in the
+// Profiles scope the sidebar. They are managed here rather than in the
 // switcher so creating one is a deliberate action and a rename has room for a
-// description. Deleting moves repositories to the default workspace; it never
+// description. Deleting moves repositories to the default profile; it never
 // touches the index, which is why the confirmation says so.
-function WorkspaceSection({
-  workspaces = [],
-  onCreateWorkspace,
-  onUpdateWorkspace,
-  onDeleteWorkspace,
+function ProfileSection({
+  profiles = [],
+  onCreateProfile,
+  onUpdateProfile,
+  onDeleteProfile,
 }) {
   const [newName, setNewName] = useState("");
   const [newDescription, setNewDescription] = useState("");
   const [editingId, setEditingId] = useState(null);
   const [draftName, setDraftName] = useState("");
   const [draftDescription, setDraftDescription] = useState("");
-  const [confirmWorkspace, setConfirmWorkspace] = useState(null);
+  const [confirmProfile, setConfirmProfile] = useState(null);
   const [isBusy, setIsBusy] = useState(false);
   const [status, setStatus] = useState(null);
 
-  const startEditing = (workspace) => {
-    setEditingId(workspace.id);
-    setDraftName(workspace.name);
-    setDraftDescription(workspace.description);
+  const startEditing = (profile) => {
+    setEditingId(profile.id);
+    setDraftName(profile.name);
+    setDraftDescription(profile.description);
     setStatus(null);
   };
 
@@ -163,35 +163,35 @@ function WorkspaceSection({
     setStatus(null);
 
     try {
-      await onCreateWorkspace({ name: newName, description: newDescription });
+      await onCreateProfile({ name: newName, description: newDescription });
       setNewName("");
       setNewDescription("");
-      setStatus({ ok: true, message: "Workspace created." });
+      setStatus({ ok: true, message: "Profile created." });
     } catch (error) {
       setStatus({
         ok: false,
-        message: error.message || "Could not create the workspace.",
+        message: error.message || "Could not create the profile.",
       });
     } finally {
       setIsBusy(false);
     }
   };
 
-  const handleSave = async (workspaceId) => {
+  const handleSave = async (profileId) => {
     setIsBusy(true);
     setStatus(null);
 
     try {
-      await onUpdateWorkspace(workspaceId, {
+      await onUpdateProfile(profileId, {
         name: draftName,
         description: draftDescription,
       });
       setEditingId(null);
-      setStatus({ ok: true, message: "Workspace updated." });
+      setStatus({ ok: true, message: "Profile updated." });
     } catch (error) {
       setStatus({
         ok: false,
-        message: error.message || "Could not update the workspace.",
+        message: error.message || "Could not update the profile.",
       });
     } finally {
       setIsBusy(false);
@@ -203,27 +203,27 @@ function WorkspaceSection({
     // main process confirms so a failure stays visible.
     event.preventDefault();
 
-    if (!confirmWorkspace) return;
+    if (!confirmProfile) return;
 
     setIsBusy(true);
     setStatus(null);
 
     try {
-      const result = await onDeleteWorkspace(confirmWorkspace.id);
+      const result = await onDeleteProfile(confirmProfile.id);
       const moved = result?.movedRepositoryCount ?? 0;
 
-      setConfirmWorkspace(null);
+      setConfirmProfile(null);
       setStatus({
         ok: true,
         message:
           moved > 0
-            ? `Workspace deleted. ${workspaceCountLabel(moved)} moved to the default workspace.`
-            : "Workspace deleted.",
+            ? `Profile deleted. ${profileCountLabel(moved)} moved to the default profile.`
+            : "Profile deleted.",
       });
     } catch (error) {
       setStatus({
         ok: false,
-        message: error.message || "Could not delete the workspace.",
+        message: error.message || "Could not delete the profile.",
       });
     } finally {
       setIsBusy(false);
@@ -232,24 +232,24 @@ function WorkspaceSection({
 
   return (
     <>
-      {workspaces.map((workspace) => (
+      {profiles.map((profile) => (
         <Row
-          key={workspace.id}
-          label={workspace.name}
-          hint={`${workspaceCountLabel(workspace.repositoryCount)}${
-            workspace.description ? ` · ${workspace.description}` : ""
-          }${workspace.isDefault ? " · Default workspace" : ""}`}
+          key={profile.id}
+          label={profile.name}
+          hint={`${profileCountLabel(profile.repositoryCount)}${
+            profile.description ? ` · ${profile.description}` : ""
+          }${profile.isDefault ? " · Default profile" : ""}`}
         >
-          {editingId === workspace.id ? (
+          {editingId === profile.id ? (
             <div className="flex flex-col gap-2">
               <Input
-                aria-label={`Name for ${workspace.name}`}
+                aria-label={`Name for ${profile.name}`}
                 value={draftName}
                 onChange={(event) => setDraftName(event.target.value)}
                 disabled={isBusy}
               />
               <Input
-                aria-label={`Description for ${workspace.name}`}
+                aria-label={`Description for ${profile.name}`}
                 value={draftDescription}
                 placeholder="Description (optional)"
                 onChange={(event) => setDraftDescription(event.target.value)}
@@ -259,7 +259,7 @@ function WorkspaceSection({
                 <Button
                   type="button"
                   size="sm"
-                  onClick={() => handleSave(workspace.id)}
+                  onClick={() => handleSave(profile.id)}
                   disabled={isBusy}
                 >
                   {isBusy ? "Saving…" : "Save"}
@@ -281,19 +281,19 @@ function WorkspaceSection({
                 type="button"
                 size="sm"
                 variant="outline"
-                onClick={() => startEditing(workspace)}
+                onClick={() => startEditing(profile)}
               >
                 <Pencil />
                 Rename
               </Button>
-              {!workspace.isDefault && (
+              {!profile.isDefault && (
                 <Button
                   type="button"
                   size="sm"
                   variant="outline"
                   onClick={() => {
                     setStatus(null);
-                    setConfirmWorkspace(workspace);
+                    setConfirmProfile(profile);
                   }}
                 >
                   <Trash2 />
@@ -311,14 +311,14 @@ function WorkspaceSection({
           onSubmit={handleCreate}
         >
           <Input
-            aria-label="New workspace name"
-            placeholder="New workspace name"
+            aria-label="New profile name"
+            placeholder="New profile name"
             value={newName}
             onChange={(event) => setNewName(event.target.value)}
             disabled={isBusy}
           />
           <Input
-            aria-label="New workspace description"
+            aria-label="New profile description"
             placeholder="Description (optional)"
             value={newDescription}
             onChange={(event) => setNewDescription(event.target.value)}
@@ -345,22 +345,22 @@ function WorkspaceSection({
       </div>
 
       <AlertDialog
-        open={Boolean(confirmWorkspace)}
+        open={Boolean(confirmProfile)}
         onOpenChange={(open) => {
           if (isBusy) return;
-          if (!open) setConfirmWorkspace(null);
+          if (!open) setConfirmProfile(null);
         }}
       >
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>
-              Delete {confirmWorkspace?.name}?
+              Delete {confirmProfile?.name}?
             </AlertDialogTitle>
             <AlertDialogDescription>
-              {confirmWorkspace
-                ? `${workspaceCountLabel(
-                    confirmWorkspace.repositoryCount,
-                  )} will move to the default workspace. The repositories stay indexed; nothing is removed from disk.`
+              {confirmProfile
+                ? `${profileCountLabel(
+                    confirmProfile.repositoryCount,
+                  )} will move to the default profile. The repositories stay indexed and nothing is removed from disk, but this profile's theme, sync, and AI settings, including its API key, will be deleted.`
                 : ""}
             </AlertDialogDescription>
           </AlertDialogHeader>
@@ -371,7 +371,7 @@ function WorkspaceSection({
               onClick={handleDelete}
               disabled={isBusy}
             >
-              {isBusy ? "Deleting…" : "Delete workspace"}
+              {isBusy ? "Deleting…" : "Delete profile"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -382,11 +382,11 @@ function WorkspaceSection({
 
 export default function Settings({
   settings,
-  workspaces = [],
+  profiles = [],
   onUpdateSettings,
-  onCreateWorkspace,
-  onUpdateWorkspace,
-  onDeleteWorkspace,
+  onCreateProfile,
+  onUpdateProfile,
+  onDeleteProfile,
 }) {
   const settingsApi = window.electronAPI?.settings;
   const [aiForm, setAiForm] = useState({
@@ -597,14 +597,14 @@ export default function Settings({
           Settings
         </h1>
         <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
-          Global preferences for this device. These apply to every repository.
+          {`Appearance, sync and AI settings belong to the ${settings.profile?.name ?? "active"} profile. Switch profiles from the sidebar to use different settings and API keys.`}
         </p>
       </header>
 
       <div className="grid max-w-[860px] gap-4 px-4 pb-8">
         <Section
           title="Appearance"
-          description="The app follows your choice immediately, including the window controls."
+          description="Saved for the active profile. The app follows your choice immediately, including the window controls."
         >
           <Row label="Theme" hint="System matches your operating system.">
             <div role="group" aria-label="Theme" className="flex flex-wrap gap-2">
@@ -631,7 +631,7 @@ export default function Settings({
 
         <Section
           title="Sync"
-          description="Atlas checks cloned repositories for new commits. Only a repository that actually moved is fetched and re-indexed."
+          description="Atlas checks this profile's cloned repositories for new commits. Only a repository that actually moved is fetched and re-indexed."
         >
           <Row
             label="Automatic sync"
@@ -715,20 +715,20 @@ export default function Settings({
         </Section>
 
         <Section
-          title="Workspaces"
-          description="Workspaces scope the sidebar so repositories from different contexts stay separate. Deleting a workspace moves its repositories to the default workspace instead of removing them."
+          title="Profiles"
+          description="Each profile has its own repositories, theme, sync policy, and AI provider settings including its API key. Deleting a profile moves its repositories to the default profile and removes its settings and key."
         >
-          <WorkspaceSection
-            workspaces={workspaces}
-            onCreateWorkspace={onCreateWorkspace}
-            onUpdateWorkspace={onUpdateWorkspace}
-            onDeleteWorkspace={onDeleteWorkspace}
+          <ProfileSection
+            profiles={profiles}
+            onCreateProfile={onCreateProfile}
+            onUpdateProfile={onUpdateProfile}
+            onDeleteProfile={onDeleteProfile}
           />
         </Section>
 
         <Section
           title="AI provider"
-          description="NVIDIA NIM powers generated answers and semantic retrieval. Without a key, Atlas still answers from the local keyword index."
+          description="NVIDIA NIM powers generated answers and semantic retrieval. These values and the API key belong to the active profile only. Without a key, Atlas still answers from the local keyword index."
         >
           <Row
             label="API key"

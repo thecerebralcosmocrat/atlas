@@ -15,13 +15,12 @@ const {
   importLegacyRepositories,
 } = require("./db/repositories");
 const {
-  listWorkspaces,
-  findWorkspace,
-  createWorkspace,
-  updateWorkspace,
-  deleteWorkspace,
-  moveRepositoryToWorkspace,
-} = require("./db/workspaces");
+  listProfiles,
+  createProfile,
+  updateProfile,
+  deleteProfile,
+  moveRepositoryToProfile,
+} = require("./db/profiles");
 const { IndexerService } = require("./indexer/IndexerService");
 const {
   inspectRepositoryUpdate,
@@ -44,6 +43,8 @@ const {
   initializeSettings,
   getPublicSettings,
   getResolvedSettings,
+  getActiveProfileId,
+  setActiveProfile,
   updateSettings,
 } = require("./settings");
 
@@ -118,24 +119,24 @@ function getAtlasPaths() {
   };
 }
 
-// The settings file can outlive the database row it points at (the workspace
-// was deleted, or the index was rebuilt). Verify the selection on every read
-// and fall back to the default workspace rather than showing an empty sidebar
-// until the user changes something. listWorkspaces puts the default first.
-function getActiveWorkspaceId() {
-  const configuredId = getResolvedSettings().general.activeWorkspaceId;
-
-  if (configuredId !== null && findWorkspace(configuredId)) {
-    return configuredId;
-  }
-
-  return listWorkspaces()[0]?.id ?? null;
+// The active profile comes from settings.js, which verifies the remembered id
+// against the database on every read and falls back to the default profile.
+function notifyProfilesChanged(event) {
+  BrowserWindow.fromWebContents(event.sender)?.webContents?.send(
+    "profiles:changed",
+  );
 }
 
-function notifyWorkspacesChanged(event) {
-  BrowserWindow.fromWebContents(event.sender)?.webContents?.send(
-    "workspaces:changed",
-  );
+// Everything that depends on which profile is active, in one place. A switch
+// (or the deletion of the active profile) changes the theme, the sync policy,
+// the AI configuration and the visible repositories together, so each owner is
+// told in the same step and nothing keeps running on the previous profile.
+function applyActiveProfileChange(mainWindow, publicSettings) {
+  applyThemeToWindow(mainWindow);
+  scheduleSyncPolling();
+  mainWindow?.webContents?.send("settings:changed", publicSettings);
+  mainWindow?.webContents?.send("profiles:changed");
+  mainWindow?.webContents?.send("repositories:changed");
 }
 
 // Cloning a large repository can take a minute before the indexer emits its
@@ -401,7 +402,7 @@ async function syncAllRepositories(mainWindow) {
   syncInFlight = (async () => {
     const results = [];
 
-    for (const repository of listSyncableRepositories()) {
+    for (const repository of listSyncableRepositories(getActiveProfileId())) {
       try {
         results.push(await syncRepository(repository, mainWindow));
       } catch (error) {
@@ -1071,60 +1072,71 @@ function registerIpcHandlers() {
     return { path: atlasRoot };
   });
 
-  ipcMain.handle("workspaces:list", async () => {
-    return listWorkspaces();
+  ipcMain.handle("profiles:list", async () => {
+    return listProfiles();
   });
 
-  ipcMain.handle("workspaces:create", async (event, patch) => {
-    const workspace = createWorkspace(patch ?? {});
-    notifyWorkspacesChanged(event);
+  ipcMain.handle("profiles:create", async (event, patch) => {
+    const profile = createProfile(patch ?? {});
+    notifyProfilesChanged(event);
 
-    return workspace;
+    return profile;
   });
 
-  ipcMain.handle("workspaces:update", async (event, payload = {}) => {
-    const { workspaceId, patch } = payload;
-    const workspace = updateWorkspace(workspaceId, patch ?? {});
-    notifyWorkspacesChanged(event);
+  ipcMain.handle("profiles:update", async (event, payload = {}) => {
+    const { profileId, patch } = payload;
+    const profile = updateProfile(profileId, patch ?? {});
+    notifyProfilesChanged(event);
 
-    return workspace;
+    return profile;
   });
 
-  ipcMain.handle("workspaces:remove", async (event, workspaceId) => {
-    const result = deleteWorkspace(workspaceId);
+  // Switching changes repositories and configuration together: the sidebar
+  // list, theme, sync policy and AI provider all belong to the new profile.
+  ipcMain.handle("profiles:switch", async (event, profileId) => {
     const mainWindow = BrowserWindow.fromWebContents(event.sender);
 
-    // Deleting the selected workspace leaves the persisted selection pointing
-    // at a row that no longer exists. Adopt the default now so every later
-    // read (and the next launch) agrees with what repositories:list returns.
-    if (getResolvedSettings().general.activeWorkspaceId === result.id) {
-      const fallbackWorkspaceId = listWorkspaces()[0]?.id ?? null;
-      const updatedSettings = updateSettings({
-        general: { activeWorkspaceId: fallbackWorkspaceId },
-      });
+    if (getActiveProfileId() === profileId) return getPublicSettings();
 
-      mainWindow?.webContents?.send("settings:changed", updatedSettings);
+    const updatedSettings = setActiveProfile(profileId);
+
+    applyActiveProfileChange(mainWindow, updatedSettings);
+
+    return updatedSettings;
+  });
+
+  ipcMain.handle("profiles:remove", async (event, profileId) => {
+    const mainWindow = BrowserWindow.fromWebContents(event.sender);
+    const wasActive = getActiveProfileId() === Number(profileId);
+    const result = deleteProfile(profileId);
+
+    // Deleting the selected profile leaves the persisted selection pointing at
+    // a row that no longer exists. Adopt the default now so every later read
+    // (and the next launch) agrees with what repositories:list returns, and so
+    // the theme, sync policy and AI config switch with it.
+    if (wasActive) {
+      applyActiveProfileChange(mainWindow, setActiveProfile(null));
+    } else {
+      mainWindow?.webContents?.send("profiles:changed");
+      mainWindow?.webContents?.send("repositories:changed");
     }
-
-    mainWindow?.webContents?.send("workspaces:changed");
-    mainWindow?.webContents?.send("repositories:changed");
 
     return result;
   });
 
-  // Scoped to the active workspace: the sidebar shows one workspace at a time,
+  // Scoped to the active profile: the sidebar shows one profile at a time,
   // while storage accounting and the legacy channels still see every row.
   ipcMain.handle("repositories:list", async () => {
-    return listRepositories(getActiveWorkspaceId());
+    return listRepositories(getActiveProfileId());
   });
 
-  ipcMain.handle("repositories:move", async (event, { repositoryId, workspaceId }) => {
-    const result = moveRepositoryToWorkspace(repositoryId, workspaceId);
+  ipcMain.handle("repositories:move", async (event, { repositoryId, profileId }) => {
+    const result = moveRepositoryToProfile(repositoryId, profileId);
     const mainWindow = BrowserWindow.fromWebContents(event.sender);
 
-    // The source and target workspace counts both changed, and a repository
+    // The source and target profile counts both changed, and a repository
     // just left (or entered) the visible list.
-    mainWindow?.webContents?.send("workspaces:changed");
+    mainWindow?.webContents?.send("profiles:changed");
     mainWindow?.webContents?.send("repositories:changed");
 
     return result;
@@ -1139,9 +1151,9 @@ function registerIpcHandlers() {
     const localPath = path.join(repositoriesRoot, id);
     const addedAt = new Date().toISOString();
     const mainWindow = BrowserWindow.fromWebContents(event.sender);
-    // Captured up front: the user expects the clone to land in the workspace
+    // Captured up front: the user expects the clone to land in the profile
     // that was selected when they asked for it.
-    const workspaceId = getActiveWorkspaceId();
+    const workspaceId = getActiveProfileId();
     const addKey = getAddKey(trimmedUrl);
 
     if (inFlightAdds.has(addKey)) {
@@ -1208,7 +1220,7 @@ function registerIpcHandlers() {
       inFlightAdds.delete(addKey);
     }
 
-    notifyWorkspacesChanged(event);
+    notifyProfilesChanged(event);
 
     return inspectRepository(findRepository(id));
   });
@@ -1248,7 +1260,7 @@ function registerIpcHandlers() {
     BrowserWindow.fromWebContents(event.sender)?.webContents?.send(
       "repositories:changed",
     );
-    notifyWorkspacesChanged(event);
+    notifyProfilesChanged(event);
 
     return { id: repository.id };
   });
@@ -1491,14 +1503,17 @@ function createWindow() {
 app.whenReady().then(async () => {
   await loadLocalEnv();
   const { atlasRoot } = await ensureAtlasStorage();
-  // Loaded before the window so the saved theme and sync policy apply from the
-  // first frame rather than being corrected after the renderer mounts.
-  initializeSettings(path.join(atlasRoot, "settings.json"));
+  // The database comes first: per-profile settings live in it, and settings
+  // initialization migrates a version 1 settings file into the default profile.
   // Adoption runs on every launch rather than only when initializeDatabase
   // opens the file: another module (or the CLI) may have initialized the
-  // singleton earlier, and a repository without a workspace would otherwise
-  // be invisible in the sidebar.
+  // singleton earlier, and a repository without a profile would otherwise be
+  // invisible in the sidebar.
   ensureDefaultWorkspace(initializeDatabase(path.join(atlasRoot, "atlas.db")));
+  // Loaded before the window so the last active profile's theme and sync policy
+  // apply from the first frame rather than being corrected after the renderer
+  // mounts.
+  initializeSettings(path.join(atlasRoot, "settings.json"));
   await migrateLegacyRepositories();
   registerIpcHandlers();
   const mainWindow = createWindow();

@@ -27,6 +27,25 @@ const SCHEMA_STATEMENTS = [
     is_default INTEGER NOT NULL DEFAULT 0,
     created_at TEXT
   )`,
+  // Everything a profile owns beyond its repository scope: appearance, sync
+  // policy, and AI provider configuration. One row per profile, keyed by the
+  // `workspaces` row id (the profile). Empty-string overrides mean "use the
+  // environment value or built-in default". The API key is stored per row, as
+  // an encrypted blob when safeStorage is available, and is never returned to
+  // the renderer.
+  `CREATE TABLE IF NOT EXISTS profile_settings (
+    profile_id INTEGER PRIMARY KEY,
+    theme TEXT NOT NULL DEFAULT 'system',
+    auto_sync INTEGER NOT NULL DEFAULT 1,
+    sync_interval_minutes INTEGER NOT NULL DEFAULT 5,
+    chat_model TEXT NOT NULL DEFAULT '',
+    chat_api_url TEXT NOT NULL DEFAULT '',
+    embed_model TEXT NOT NULL DEFAULT '',
+    embed_api_url TEXT NOT NULL DEFAULT '',
+    api_key_value TEXT,
+    api_key_encrypted INTEGER NOT NULL DEFAULT 0,
+    updated_at TEXT
+  )`,
   `CREATE TABLE IF NOT EXISTS files (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     repo_id INTEGER,

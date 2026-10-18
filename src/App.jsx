@@ -18,13 +18,13 @@ function getSettingsApi() {
   return window.electronAPI?.settings;
 }
 
-function getWorkspaceApi() {
-  return window.electronAPI?.workspaces;
+function getProfileApi() {
+  return window.electronAPI?.profiles;
 }
 
 export default function App() {
   const [repositories, setRepositories] = useState([]);
-  const [workspaces, setWorkspaces] = useState([]);
+  const [profiles, setProfiles] = useState([]);
   const [selectedRepositoryId, setSelectedRepositoryId] = useState(null);
   const [selectedDetails, setSelectedDetails] = useState(null);
   const [isInspecting, setIsInspecting] = useState(false);
@@ -34,7 +34,7 @@ export default function App() {
   const [refreshToken, setRefreshToken] = useState(0);
   const repositoryApi = useMemo(getRepositoryApi, []);
   const settingsApi = useMemo(getSettingsApi, []);
-  const workspaceApi = useMemo(getWorkspaceApi, []);
+  const profileApi = useMemo(getProfileApi, []);
 
   useEffect(() => {
     let active = true;
@@ -69,45 +69,45 @@ export default function App() {
   useEffect(() => {
     let active = true;
 
-    async function loadWorkspaces() {
-      if (!workspaceApi) return;
+    async function loadProfiles() {
+      if (!profileApi) return;
 
       try {
-        const storedWorkspaces = await workspaceApi.list();
+        const storedProfiles = await profileApi.list();
 
         // The main process reloaded the list from SQLite, so the counts are
         // current; this is also how a move or delete updates the switcher.
-        if (active) setWorkspaces(storedWorkspaces);
+        if (active) setProfiles(storedProfiles);
       } catch (error) {
-        console.error("Failed to load workspaces:", error);
+        console.error("Failed to load profiles:", error);
       }
     }
 
-    loadWorkspaces();
+    loadProfiles();
 
-    const unsubscribe = workspaceApi?.onChanged?.(loadWorkspaces);
+    const unsubscribe = profileApi?.onChanged?.(loadProfiles);
 
     return () => {
       active = false;
       unsubscribe?.();
     };
-  }, [workspaceApi, refreshToken]);
+  }, [profileApi, refreshToken]);
 
-  // The configured id can be stale (the workspace was deleted on another
+  // The configured id can be stale (the profile was deleted on another
   // launch), so trust the database list and fall back to the default, which
-  // listWorkspaces returns first.
-  const configuredWorkspaceId = settings?.general?.activeWorkspaceId ?? null;
-  const activeWorkspace =
-    workspaces.find((workspace) => workspace.id === configuredWorkspaceId) ??
-    workspaces[0] ??
+  // listProfiles returns first.
+  const configuredProfileId = settings?.general?.activeProfileId ?? null;
+  const activeProfile =
+    profiles.find((profile) => profile.id === configuredProfileId) ??
+    profiles[0] ??
     null;
   // Read inside async handlers, which may resolve after the user switches
-  // workspaces; state captured at call time would be stale by then.
-  const activeWorkspaceIdRef = useRef(null);
+  // profiles; state captured at call time would be stale by then.
+  const activeProfileIdRef = useRef(null);
 
   useEffect(() => {
-    activeWorkspaceIdRef.current = activeWorkspace?.id ?? null;
-  }, [activeWorkspace?.id]);
+    activeProfileIdRef.current = activeProfile?.id ?? null;
+  }, [activeProfile?.id]);
 
   // The main process keeps the native titlebar and native surfaces in step;
   // the renderer owns the class that swaps the CSS variables.
@@ -133,9 +133,9 @@ export default function App() {
     async function loadRepositories() {
       if (!repositoryApi) return;
 
-      // The main process scopes this to the active workspace. Switching
-      // workspaces therefore re-reads the list and cannot leave a repository
-      // from the previous workspace selected.
+      // The main process scopes this to the active profile. Switching
+      // profiles therefore re-reads the list and cannot leave a repository
+      // from the previous profile selected.
       const storedRepositories = await repositoryApi.list();
       setRepositories(storedRepositories);
       setSelectedRepositoryId((currentId) => {
@@ -148,7 +148,7 @@ export default function App() {
     }
 
     loadRepositories();
-  }, [repositoryApi, refreshToken, activeWorkspace?.id]);
+  }, [repositoryApi, refreshToken, activeProfile?.id]);
 
   useEffect(() => {
     if (!repositoryApi?.onChanged) return undefined;
@@ -190,10 +190,10 @@ export default function App() {
 
     const repository = await repositoryApi.add(repositoryUrl);
 
-    // Indexing can take a while. If the workspace changed in the meantime, the
-    // repository belongs to the workspace that was active when the add began,
+    // Indexing can take a while. If the profile changed in the meantime, the
+    // repository belongs to the profile that was active when the add began,
     // so reload the scoped list instead of injecting it into the current one.
-    if (repository.workspaceId !== activeWorkspaceIdRef.current) {
+    if (repository.workspaceId !== activeProfileIdRef.current) {
       setRefreshToken((currentToken) => currentToken + 1);
 
       return repository;
@@ -255,44 +255,52 @@ export default function App() {
     return updatedSettings;
   };
 
-  const handleSwitchWorkspace = async (workspaceId) => {
-    if (workspaceId === activeWorkspace?.id) return;
+  const handleSwitchProfile = async (profileId) => {
+    if (profileId === activeProfile?.id) return;
 
-    // Persisting the selection is what makes `repositories:list` return the
-    // new workspace on the next read, and what restores it on the next launch.
-    await handleUpdateSettings({ general: { activeWorkspaceId: workspaceId } });
+    if (!profileApi?.switch) {
+      throw new Error("Profiles are only available in the Electron app.");
+    }
+
+    // The main process persists the selection and switches the repositories,
+    // theme, sync policy and AI configuration together, then returns the new
+    // profile's settings so the renderer never shows one profile's repositories
+    // under another's configuration.
+    const updatedSettings = await profileApi.switch(profileId);
+    setSettings(updatedSettings);
+    setRefreshToken((currentToken) => currentToken + 1);
   };
 
-  const handleMoveRepository = async (repositoryId, workspaceId) => {
+  const handleMoveRepository = async (repositoryId, profileId) => {
     if (!repositoryApi?.move) {
-      throw new Error("Workspaces are only available in the Electron app.");
+      throw new Error("Profiles are only available in the Electron app.");
     }
 
-    return repositoryApi.move(repositoryId, workspaceId);
+    return repositoryApi.move(repositoryId, profileId);
   };
 
-  const handleCreateWorkspace = async (workspace) => {
-    if (!workspaceApi) {
-      throw new Error("Workspaces are only available in the Electron app.");
+  const handleCreateProfile = async (profile) => {
+    if (!profileApi) {
+      throw new Error("Profiles are only available in the Electron app.");
     }
 
-    return workspaceApi.create(workspace);
+    return profileApi.create(profile);
   };
 
-  const handleUpdateWorkspace = async (workspaceId, patch) => {
-    if (!workspaceApi) {
-      throw new Error("Workspaces are only available in the Electron app.");
+  const handleUpdateProfile = async (profileId, patch) => {
+    if (!profileApi) {
+      throw new Error("Profiles are only available in the Electron app.");
     }
 
-    return workspaceApi.update(workspaceId, patch);
+    return profileApi.update(profileId, patch);
   };
 
-  const handleDeleteWorkspace = async (workspaceId) => {
-    if (!workspaceApi) {
-      throw new Error("Workspaces are only available in the Electron app.");
+  const handleDeleteProfile = async (profileId) => {
+    if (!profileApi) {
+      throw new Error("Profiles are only available in the Electron app.");
     }
 
-    return workspaceApi.remove(workspaceId);
+    return profileApi.remove(profileId);
   };
 
   const handleDeleteRepository = async (repositoryId) => {
@@ -330,11 +338,11 @@ export default function App() {
           <div className="flex flex-1 overflow-hidden">
             <Sidebar
               repositories={repositories}
-              workspaces={workspaces}
-              activeWorkspace={activeWorkspace}
+              profiles={profiles}
+              activeProfile={activeProfile}
               selectedRepositoryId={selectedRepositoryId}
               onSelectRepository={setSelectedRepositoryId}
-              onSwitchWorkspace={handleSwitchWorkspace}
+              onSwitchProfile={handleSwitchProfile}
               onMoveRepository={handleMoveRepository}
               onRequestDeleteRepository={handleDeleteRepository}
             />
@@ -350,11 +358,11 @@ export default function App() {
                   element={
                     <Settings
                       settings={settings}
-                      workspaces={workspaces}
+                      profiles={profiles}
                       onUpdateSettings={handleUpdateSettings}
-                      onCreateWorkspace={handleCreateWorkspace}
-                      onUpdateWorkspace={handleUpdateWorkspace}
-                      onDeleteWorkspace={handleDeleteWorkspace}
+                      onCreateProfile={handleCreateProfile}
+                      onUpdateProfile={handleUpdateProfile}
+                      onDeleteProfile={handleDeleteProfile}
                     />
                   }
                 />

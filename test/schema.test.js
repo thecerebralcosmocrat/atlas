@@ -20,7 +20,7 @@ test("creates the expected tables", () => {
     .all()
     .map((row) => row.name);
 
-  for (const expected of ["repos", "files", "imports", "symbols", "workspaces"]) {
+  for (const expected of ["repos", "files", "imports", "symbols", "workspaces", "profile_settings"]) {
     assert.ok(tables.includes(expected), `expected table '${expected}'`);
   }
 });

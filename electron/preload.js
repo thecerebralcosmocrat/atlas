@@ -25,18 +25,18 @@ contextBridge.exposeInMainWorld("electronAPI", {
     ownership: (repositoryId, filePath) =>
       ipcRenderer.invoke("get-ownership", { repoId: repositoryId, path: filePath }),
   },
-  workspaces: {
-    list: () => ipcRenderer.invoke("workspaces:list"),
-    create: (workspace) => ipcRenderer.invoke("workspaces:create", workspace),
-    update: (workspaceId, patch) =>
-      ipcRenderer.invoke("workspaces:update", { workspaceId, patch }),
-    remove: (workspaceId) =>
-      ipcRenderer.invoke("workspaces:remove", workspaceId),
+  profiles: {
+    list: () => ipcRenderer.invoke("profiles:list"),
+    create: (profile) => ipcRenderer.invoke("profiles:create", profile),
+    update: (profileId, patch) =>
+      ipcRenderer.invoke("profiles:update", { profileId, patch }),
+    switch: (profileId) => ipcRenderer.invoke("profiles:switch", profileId),
+    remove: (profileId) => ipcRenderer.invoke("profiles:remove", profileId),
     onChanged: (callback) => {
       const subscription = () => callback();
-      ipcRenderer.on("workspaces:changed", subscription);
+      ipcRenderer.on("profiles:changed", subscription);
       return () => {
-        ipcRenderer.removeListener("workspaces:changed", subscription);
+        ipcRenderer.removeListener("profiles:changed", subscription);
       };
     },
   },
@@ -48,8 +48,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ipcRenderer.invoke("repositories:inspect", repositoryId),
     remove: (repositoryId) =>
       ipcRenderer.invoke("repositories:remove", repositoryId),
-    move: (repositoryId, workspaceId) =>
-      ipcRenderer.invoke("repositories:move", { repositoryId, workspaceId }),
+    move: (repositoryId, profileId) =>
+      ipcRenderer.invoke("repositories:move", { repositoryId, profileId }),
     sync: (repositoryId) =>
       ipcRenderer.invoke("repositories:sync", repositoryId),
     discardChanges: (repositoryId) =>

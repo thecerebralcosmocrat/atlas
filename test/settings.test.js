@@ -10,6 +10,8 @@ const {
   updateSettings,
   DEFAULTS,
 } = require("../electron/settings");
+const { initializeDatabase } = require("../electron/db/schema");
+const { listProfiles } = require("../electron/db/profiles");
 const { loadMain } = require("./helpers/loadMain");
 const { makeTempDir, cleanupTempDirs } = require("./helpers/tempDirs");
 
@@ -29,8 +31,16 @@ function clearEnv() {
   }
 }
 
-function makeSettingsPath() {
-  return path.join(makeTempDir("atlas-settings-"), "settings.json");
+// Per-profile settings live in SQLite, so every case needs a database as well
+// as the install-wide settings file.
+function setup() {
+  const dir = makeTempDir("atlas-settings-");
+  const settingsPath = path.join(dir, "settings.json");
+
+  initializeDatabase(path.join(dir, "atlas.db"));
+  initializeSettings(settingsPath);
+
+  return { dir, settingsPath };
 }
 
 test.afterEach(() => {
@@ -39,15 +49,18 @@ test.afterEach(() => {
 });
 
 test("falls back to defaults with no settings file", () => {
-  initializeSettings(makeSettingsPath());
+  setup();
 
   const settings = getPublicSettings();
+  const [defaultProfile] = listProfiles();
 
   assert.strictEqual(settings.general.theme, "system");
   assert.strictEqual(settings.general.autoSync, true);
   assert.strictEqual(settings.general.syncIntervalMinutes, 5);
-  // Null means "no explicit choice", which resolves to the default workspace.
-  assert.strictEqual(settings.general.activeWorkspaceId, null);
+  // With no remembered choice the default profile is active.
+  assert.strictEqual(settings.general.activeProfileId, defaultProfile.id);
+  assert.strictEqual(settings.profile.id, defaultProfile.id);
+  assert.strictEqual(settings.profile.isDefault, true);
   assert.strictEqual(settings.ai.apiKeySource, "none");
   assert.strictEqual(settings.ai.hasApiKey, false);
   assert.strictEqual(settings.ai.chatModel, "");
@@ -58,51 +71,43 @@ test("falls back to defaults with no settings file", () => {
   );
 });
 
-test("persists general and AI overrides across reloads", () => {
-  const filePath = makeSettingsPath();
-  initializeSettings(filePath);
+test("persists general and AI overrides in the database", () => {
+  setup();
 
   updateSettings({
-    general: {
-      theme: "dark",
-      autoSync: false,
-      syncIntervalMinutes: 15,
-      activeWorkspaceId: 7,
-    },
+    general: { theme: "dark", autoSync: false, syncIntervalMinutes: 15 },
     ai: { chatModel: "custom-model", chatApiUrl: "https://example.com/chat" },
   });
-
-  initializeSettings(filePath);
 
   const settings = getPublicSettings();
 
   assert.strictEqual(settings.general.theme, "dark");
   assert.strictEqual(settings.general.autoSync, false);
   assert.strictEqual(settings.general.syncIntervalMinutes, 15);
-  assert.strictEqual(settings.general.activeWorkspaceId, 7);
   assert.strictEqual(settings.ai.chatModel, "custom-model");
   assert.strictEqual(settings.ai.chatApiUrl, "https://example.com/chat");
 });
 
 test("stores an API key without exposing it in the renderer payload", () => {
-  const filePath = makeSettingsPath();
-  initializeSettings(filePath);
+  const { settingsPath } = setup();
 
   const publicSettings = updateSettings({ ai: { apiKey: "secret-key" } });
 
   assert.strictEqual(publicSettings.ai.apiKeySource, "settings");
   assert.strictEqual(publicSettings.ai.hasApiKey, true);
   assert.ok(!JSON.stringify(publicSettings).includes("secret-key"));
+  assert.ok(!JSON.stringify(getPublicSettings()).includes("secret-key"));
   assert.strictEqual(getResolvedSettings().ai.apiKey, "secret-key");
 
-  // The file holds the key (encrypted when safeStorage is available, plain
-  // under the test runner), and the public shape never carries it.
-  const onDisk = fs.readFileSync(filePath, "utf8");
-  assert.ok(onDisk.includes("apiKey"));
+  // The key lives in the profile's database row, not in the install-wide
+  // settings file, which only remembers which profile was active.
+  if (fs.existsSync(settingsPath)) {
+    assert.ok(!fs.readFileSync(settingsPath, "utf8").includes("secret-key"));
+  }
 });
 
 test("clearing the stored key falls back to the environment", () => {
-  initializeSettings(makeSettingsPath());
+  setup();
   updateSettings({ ai: { apiKey: "stored-key" } });
 
   process.env.NVIDIA_NIM_API_KEY = "env-key";
@@ -115,7 +120,7 @@ test("clearing the stored key falls back to the environment", () => {
 });
 
 test("saved values win over environment values, which win over defaults", () => {
-  initializeSettings(makeSettingsPath());
+  setup();
   process.env.NVIDIA_NIM_MODEL = "env-model";
 
   assert.strictEqual(getPublicSettings().ai.effective.chatModel, "env-model");
@@ -126,7 +131,7 @@ test("saved values win over environment values, which win over defaults", () => 
 });
 
 test("an empty AI field clears the override and resolves again", () => {
-  initializeSettings(makeSettingsPath());
+  setup();
   updateSettings({ ai: { chatModel: "saved-model" } });
 
   const settings = updateSettings({ ai: { chatModel: "" } });
@@ -136,7 +141,7 @@ test("an empty AI field clears the override and resolves again", () => {
 });
 
 test("rejects invalid updates without changing the current settings", () => {
-  initializeSettings(makeSettingsPath());
+  setup();
 
   assert.throws(() => updateSettings({ general: { theme: "neon" } }), /Theme/);
   assert.throws(
@@ -151,17 +156,10 @@ test("rejects invalid updates without changing the current settings", () => {
     () => updateSettings({ general: { autoSync: "yes" } }),
     /Auto-sync/,
   );
+  // Switching profiles is its own operation; a settings patch cannot do it.
   assert.throws(
-    () => updateSettings({ general: { activeWorkspaceId: 1.5 } }),
-    /workspace/i,
-  );
-  assert.throws(
-    () => updateSettings({ general: { activeWorkspaceId: 0 } }),
-    /workspace/i,
-  );
-  assert.throws(
-    () => updateSettings({ general: { activeWorkspaceId: "2" } }),
-    /workspace/i,
+    () => updateSettings({ general: { activeProfileId: 1 } }),
+    /profile/i,
   );
   assert.throws(
     () => updateSettings({ ai: { chatApiUrl: "ftp://example.com" } }),
@@ -170,22 +168,31 @@ test("rejects invalid updates without changing the current settings", () => {
 
   assert.strictEqual(getPublicSettings().general.theme, "system");
   assert.strictEqual(getPublicSettings().general.syncIntervalMinutes, 5);
-  assert.strictEqual(getPublicSettings().general.activeWorkspaceId, null);
+});
 
-  // Clearing the explicit choice is valid and falls back to the default.
-  assert.strictEqual(
-    updateSettings({ general: { activeWorkspaceId: null } }).general
-      .activeWorkspaceId,
-    null,
+test("a rejected update is all-or-nothing", () => {
+  setup();
+
+  assert.throws(
+    () =>
+      updateSettings({
+        general: { theme: "dark" },
+        ai: { chatApiUrl: "not a url" },
+      }),
+    /http/,
   );
+
+  assert.strictEqual(getPublicSettings().general.theme, "system");
 });
 
 test("ignores a corrupt settings file", () => {
-  const filePath = makeSettingsPath();
-  fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  fs.writeFileSync(filePath, "{ not json");
+  const dir = makeTempDir("atlas-settings-corrupt-");
+  const settingsPath = path.join(dir, "settings.json");
 
-  initializeSettings(filePath);
+  initializeDatabase(path.join(dir, "atlas.db"));
+  fs.writeFileSync(settingsPath, "{ not json");
+
+  initializeSettings(settingsPath);
 
   assert.strictEqual(getPublicSettings().general.theme, "system");
 });
@@ -214,8 +221,6 @@ test("main process exposes the settings IPC handlers", async () => {
   assert.strictEqual(updated.general.theme, "dark");
   assert.strictEqual(updated.general.syncIntervalMinutes, 10);
 
-  // Settings live beside the database in the app's data folder.
-  const settingsPath = path.join(userData, "atlas-data", "settings.json");
-
-  assert.ok(fs.existsSync(settingsPath));
+  // Per-profile settings live in the database in the app's data folder.
+  assert.ok(fs.existsSync(path.join(userData, "atlas-data", "atlas.db")));
 });

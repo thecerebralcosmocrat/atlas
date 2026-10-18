@@ -119,14 +119,16 @@ function listRepositoriesWithoutChunks(model) {
 // have been indexed at least once, so there is a known-good state to compare
 // against. Never-indexed rows are left to the startup backfill so the two
 // passes do not both read the same folder.
-function listSyncableRepositories() {
+function listSyncableRepositories(workspaceId = null) {
+  const scoped = workspaceId !== null && workspaceId !== undefined;
   const rows = getDb()
     .prepare(
       `SELECT ${REPOSITORY_COLUMNS} FROM repos
         WHERE url IS NOT NULL AND url != '' AND indexed_at IS NOT NULL
+          ${scoped ? "AND workspace_id = ?" : ""}
         ORDER BY id`,
     )
-    .all();
+    .all(...(scoped ? [Number(workspaceId)] : []));
 
   return rows.map(mapIndexTargetRow);
 }
