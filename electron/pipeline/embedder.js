@@ -11,6 +11,11 @@
 const DEFAULT_EMBED_API_URL = "https://integrate.api.nvidia.com/v1/embeddings";
 const DEFAULT_EMBED_MODEL = "nvidia/nemotron-3-embed-1b";
 const DEFAULT_BATCH_SIZE = 32;
+// A request that never answers would leave an add stuck on "indexing" forever:
+// the index deadline is only checked between phases, not inside the network
+// call. Aborting the batch turns that hang into the same non-fatal embedding
+// failure as an HTTP error, and indexing falls back to lexical retrieval.
+const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 
 // Returns null when no key is configured. Callers treat that as "no semantic
 // retrieval available" and fall back to lexical search rather than failing.
@@ -19,6 +24,7 @@ function createNimEmbedder({
   model = DEFAULT_EMBED_MODEL,
   apiUrl = DEFAULT_EMBED_API_URL,
   batchSize = DEFAULT_BATCH_SIZE,
+  requestTimeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
   fetchImpl,
 } = {}) {
   if (!apiKey) return null;
@@ -34,6 +40,7 @@ function createNimEmbedder({
       const batch = inputs.slice(start, start + batchSize);
       const response = await request(apiUrl, {
         method: "POST",
+        signal: AbortSignal.timeout(requestTimeoutMs),
         headers: {
           Authorization: `Bearer ${apiKey}`,
           "Content-Type": "application/json",

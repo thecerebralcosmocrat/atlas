@@ -63,6 +63,13 @@ contextBridge.exposeInMainWorld("electronAPI", {
         ipcRenderer.removeListener("index-progress", subscription);
       };
     },
+    onAddProgress: (callback) => {
+      const subscription = (event, value) => callback(value);
+      ipcRenderer.on("add-progress", subscription);
+      return () => {
+        ipcRenderer.removeListener("add-progress", subscription);
+      };
+    },
     onChanged: (callback) => {
       const subscription = () => callback();
       ipcRenderer.on("repositories:changed", subscription);

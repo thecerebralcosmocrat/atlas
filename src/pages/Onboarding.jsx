@@ -11,12 +11,21 @@ export default function Onboarding({ onAddRepository }) {
   const [error, setError] = useState("");
   const logContainerRef = useRef(null);
   const [progress, setProgress] = useState(null);
+  const [addProgress, setAddProgress] = useState(null);
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  // State updates land after the event that started the add, so two Enter
+  // presses in the same tick would both see `isIndexing === false` and start
+  // two clones. The ref closes that window.
+  const submitInFlightRef = useRef(false);
 
   const handleIndex = async () => {
-    if (!url.trim()) return;
+    if (submitInFlightRef.current || !url.trim()) return;
 
+    submitInFlightRef.current = true;
     setError("");
     setIsIndexing(true);
+    setAddProgress(null);
+    setProgress(null);
     setLogs([`Connecting to repository: ${url.trim()}`]);
 
     try {
@@ -35,8 +44,10 @@ export default function Onboarding({ onAddRepository }) {
         "Indexing failed. Check the URL and try again.",
       ]);
     } finally {
+      submitInFlightRef.current = false;
       setIsIndexing(false);
       setProgress(null);
+      setAddProgress(null);
     }
   };
 
@@ -46,19 +57,76 @@ export default function Onboarding({ onAddRepository }) {
     }
   }, [logs]);
 
+  // A clone of a large repository can take over a minute. The seconds counter
+  // is the difference between "working" and an app that looks frozen.
   useEffect(() => {
-    if (!window.electronAPI?.repositories?.onIndexProgress) return undefined;
+    if (!isIndexing) {
+      setElapsedSeconds(0);
+      return undefined;
+    }
 
-    const unsubscribe = window.electronAPI.repositories.onIndexProgress(
-      (data) => {
-        setProgress(data);
-      },
-    );
+    const startedAt = Date.now();
+    const timer = setInterval(() => {
+      setElapsedSeconds(Math.floor((Date.now() - startedAt) / 1000));
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, [isIndexing]);
+
+  useEffect(() => {
+    const repositories = window.electronAPI?.repositories;
+
+    if (!repositories?.onIndexProgress) return undefined;
+
+    const unsubscribeProgress = repositories.onIndexProgress((data) => {
+      // Index ticks resume after embedding, so they also clear the embedding
+      // phase; leaving it set would hide the final file count.
+      setAddProgress(null);
+      setProgress(data);
+    });
+    const unsubscribeAdd =
+      repositories.onAddProgress?.((data) => setAddProgress(data)) ?? (() => {});
 
     return () => {
-      unsubscribe();
+      unsubscribeProgress();
+      unsubscribeAdd();
     };
   }, []);
+
+  const phase = addProgress?.phase ?? null;
+  const isCloning = isIndexing && phase === "clone";
+  const isEmbedding = isIndexing && phase === "embedding";
+  const showProgress = isIndexing && (isCloning || isEmbedding || phase === "index" || progress);
+  const clonePercent =
+    isCloning && typeof addProgress.percent === "number"
+      ? addProgress.percent
+      : null;
+  let progressLabel = "Preparing…";
+  let progressDetail = `${elapsedSeconds}s`;
+  let progressPercent = null;
+
+  if (isCloning) {
+    progressLabel = addProgress.stage
+      ? `Cloning · ${addProgress.stage} objects`
+      : "Cloning the default branch";
+    progressPercent = clonePercent;
+    progressDetail =
+      clonePercent === null ? `${elapsedSeconds}s` : `${clonePercent}%`;
+  } else if (isEmbedding) {
+    progressLabel = "Building the semantic search index";
+    progressDetail = `${elapsedSeconds}s`;
+  } else if (progress) {
+    progressLabel = progress.currentFile
+      ? progress.currentFile.length > 40
+        ? progress.currentFile.slice(-40)
+        : progress.currentFile
+      : "Preparing…";
+    progressPercent =
+      progress.total > 0 ? (progress.completed / progress.total) * 100 : 0;
+    progressDetail = `${progress.completed} / ${progress.total} files`;
+  } else if (isIndexing) {
+    progressLabel = "Reading files";
+  }
 
   return (
     <div className="min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden px-6 py-10">
@@ -82,6 +150,7 @@ export default function Onboarding({ onAddRepository }) {
               type="text"
               value={url}
               onChange={(e) => setUrl(e.target.value)}
+              disabled={isIndexing}
               placeholder="https://github.com/user/repo"
               className="h-full flex-1 border-none bg-transparent px-3 text-[15px] text-foreground outline-none placeholder:text-muted-foreground"
               onKeyDown={(e) => {
@@ -120,29 +189,26 @@ export default function Onboarding({ onAddRepository }) {
             </div>
           )}
 
-          {progress && (
+          {showProgress && (
             <div className="mt-4 border border-border p-4">
               <div className="flex justify-between items-center mb-2 text-sm text-muted-foreground">
-                <span className="truncate">
-                  {progress.currentFile
-                    ? progress.currentFile.length > 40
-                      ? progress.currentFile.slice(-40)
-                      : progress.currentFile
-                    : "Preparing…"}
-                </span>
-                <span className="font-medium shrink-0 ms-4">
-                  {progress.completed} / {progress.total} files
+                <span className="truncate">{progressLabel}</span>
+                <span className="font-medium shrink-0 ms-4 tabular-nums">
+                  {progressDetail}
                 </span>
               </div>
               <div className="w-full bg-secondary h-2 rounded-none overflow-hidden">
                 <div
-                  className="bg-primary h-full rounded-none transition-all duration-300 ease-out"
+                  className={
+                    progressPercent === null
+                      ? "bg-primary h-full rounded-none animate-pulse"
+                      : "bg-primary h-full rounded-none transition-all duration-300 ease-out"
+                  }
                   style={{
-                    width: `${
-                      progress.total > 0
-                        ? (progress.completed / progress.total) * 100
-                        : 0
-                    }%`,
+                    width:
+                      progressPercent === null
+                        ? "100%"
+                        : `${Math.min(100, Math.max(0, progressPercent))}%`,
                   }}
                 />
               </div>

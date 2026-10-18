@@ -26,6 +26,7 @@ const { IndexerService } = require("./indexer/IndexerService");
 const {
   inspectRepositoryUpdate,
   applyRepositoryUpdate,
+  gitEnvironment,
 } = require("./sync/gitSync");
 const { retrieveRepositoryExcerpts } = require("./query/search");
 const { createNimEmbedder } = require("./pipeline/embedder");
@@ -135,6 +136,18 @@ function notifyWorkspacesChanged(event) {
   BrowserWindow.fromWebContents(event.sender)?.webContents?.send(
     "workspaces:changed",
   );
+}
+
+// Cloning a large repository can take a minute before the indexer emits its
+// first progress tick. Without a signal the add looks frozen and users start a
+// second add or quit, leaving a half-cloned folder behind. These events carry
+// the phase the add is in so the renderer can show movement.
+function notifyAddProgress(mainWindow, payload) {
+  try {
+    mainWindow?.webContents?.send("add-progress", payload);
+  } catch {
+    // The renderer is gone; the clone/index is unaffected.
+  }
 }
 
 async function ensureAtlasStorage() {
@@ -504,6 +517,18 @@ async function discardRepositoryChanges(repository, mainWindow) {
 
 const CLONE_TIMEOUT_MS = 5 * 60 * 1000;
 const INDEX_TIMEOUT_MS = 10 * 60 * 1000;
+
+// A second add for the same repository while the first is still cloning would
+// clone it twice, race the two index writes, and leave one folder orphaned if
+// either is interrupted. The renderer guards its own button, but the main
+// process is the only place every caller passes through.
+const inFlightAdds = new Set();
+
+function getAddKey(repositoryUrl) {
+  // `owner/repo`, `owner/repo.git`, and `owner/repo/` name the same repository.
+  // Only the in-flight check is normalized; the clone uses the typed URL.
+  return repositoryUrl.replace(/\/+$/, "").replace(/\.git$/i, "");
+}
 // A chat request that never answers must not hold the ask handler open, or the
 // renderer sits on "Thinking…" forever. Past this it falls back to the local
 // answer path.
@@ -1117,13 +1142,46 @@ function registerIpcHandlers() {
     // Captured up front: the user expects the clone to land in the workspace
     // that was selected when they asked for it.
     const workspaceId = getActiveWorkspaceId();
+    const addKey = getAddKey(trimmedUrl);
+
+    if (inFlightAdds.has(addKey)) {
+      throw new Error("This repository is already being added.");
+    }
+
+    inFlightAdds.add(addKey);
 
     try {
-      await simpleGit({ timeout: { block: CLONE_TIMEOUT_MS } }).clone(
-        trimmedUrl,
-        localPath,
-        ["--depth", "1"],
-      );
+      let lastCloneTick = null;
+
+      await simpleGit({
+        timeout: { block: CLONE_TIMEOUT_MS },
+        // simple-git adds `--progress` when a handler is configured. A large
+        // repository transfers for a minute or more, so the renderer needs to
+        // see the percentage rather than one static "cloning" line.
+        progress: ({ stage, progress }) => {
+          if (
+            lastCloneTick &&
+            lastCloneTick.stage === stage &&
+            lastCloneTick.progress === progress
+          ) {
+            return;
+          }
+
+          lastCloneTick = { stage, progress };
+          notifyAddProgress(mainWindow, {
+            phase: "clone",
+            stage: stage ?? null,
+            percent: progress ?? null,
+          });
+        },
+      })
+        // The same sanitized environment the sync poller uses: an unattended
+        // clone must fail on a private or missing repository instead of
+        // blocking on an invisible credential prompt.
+        .env(gitEnvironment())
+        .clone(trimmedUrl, localPath, ["--depth", "1"]);
+
+      notifyAddProgress(mainWindow, { phase: "index" });
 
       // Index before recording the repository so a failed index cannot leave a
       // repository entry behind with no files. The indexer writes the SQLite row,
@@ -1132,13 +1190,22 @@ function registerIpcHandlers() {
         localPath,
         mainWindow,
         { externalId: id, name, url: trimmedUrl, addedAt, workspaceId },
-        { timeoutMs: INDEX_TIMEOUT_MS, embedder: getNimEmbedder() },
+        {
+          timeoutMs: INDEX_TIMEOUT_MS,
+          embedder: getNimEmbedder(),
+          // Chunk embedding is a network round trip after the file loop, and
+          // the last file tick otherwise sits unchanged for its whole duration.
+          onEmbeddingStart: () =>
+            notifyAddProgress(mainWindow, { phase: "embedding" }),
+        },
       );
     } catch (error) {
       // A failed clone or index must not leave a half-written repository folder
       // behind on disk.
       await fs.rm(localPath, { recursive: true, force: true }).catch(() => {});
       throw error;
+    } finally {
+      inFlightAdds.delete(addKey);
     }
 
     notifyWorkspacesChanged(event);

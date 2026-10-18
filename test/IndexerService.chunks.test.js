@@ -137,6 +137,31 @@ test("embeds the path with the chunk so filename questions can match", async () 
   assert.strictEqual(row.content, "const routes = [];");
 });
 
+test("notifies before embedding so the pause is explained", async () => {
+  initializeDatabase(makeTempDbPath());
+  const repo = makeFixtureRepo({ "a.js": "let a;\n" });
+  const calls = [];
+
+  await new IndexerService().indexRepo(repo, fakeWindow(), {}, {
+    embedder: fakeEmbedder(),
+    onEmbeddingStart: () => calls.push("embedding"),
+  });
+
+  assert.deepStrictEqual(calls, ["embedding"]);
+});
+
+test("does not announce embedding when there is no embedder", async () => {
+  initializeDatabase(makeTempDbPath());
+  const repo = makeFixtureRepo({ "a.js": "let a;\n" });
+  const calls = [];
+
+  await new IndexerService().indexRepo(repo, fakeWindow(), {}, {
+    onEmbeddingStart: () => calls.push("embedding"),
+  });
+
+  assert.deepStrictEqual(calls, []);
+});
+
 test("indexing without an embedder still indexes the files", async () => {
   const db = initializeDatabase(makeTempDbPath());
   const repo = makeFixtureRepo({ "a.js": "let a;\n" });

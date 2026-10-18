@@ -4,6 +4,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const { initializeDatabase } = require("../electron/db/schema");
+const { IndexerService } = require("../electron/indexer/IndexerService");
 const { makeTempDir, cleanupTempDirs } = require("./helpers/tempDirs");
 const { loadMain, makeGitFixtureRepo } = require("./helpers/loadMain");
 
@@ -40,6 +41,13 @@ test("repositories:add clones, indexes, and reports progress before persisting",
     currentFile: null,
   });
 
+  // The renderer switches out of the (potentially long) clone phase before the
+  // first index tick, so the progress card never looks stuck on "cloning".
+  const addProgress = sentEvents
+    .filter((event) => event.channel === "add-progress")
+    .map((event) => event.payload);
+  assert.deepStrictEqual(addProgress.at(-1), { phase: "index" });
+
   // Files landed in SQLite...
   const dbPath = path.join(userData, "atlas-data", "atlas.db");
   const db = initializeDatabase(dbPath);
@@ -60,6 +68,52 @@ test("repositories:add clones, indexes, and reports progress before persisting",
   assert.strictEqual(repositories[0].localPath, result.localPath);
   assert.strictEqual(repositories[0].url, repoUrl);
   assert.strictEqual(repositories[0].fileCount, 2);
+});
+
+test("rejects a second add for the same repository while the first is still running", async () => {
+  const userData = makeTempDir("atlas-userdata-");
+  const repo = makeGitFixtureRepo();
+  const repoUrl = `file:///${repo.replace(/\\/g, "/")}`;
+  let markIndexStarted;
+  const indexStarted = new Promise((resolve) => {
+    markIndexStarted = resolve;
+  });
+  let releaseIndex;
+  const indexGate = new Promise((resolve) => {
+    releaseIndex = resolve;
+  });
+
+  // Blocks after the clone so both adds would overlap exactly where the real
+  // race happens: two clones/indexes racing each other.
+  class BlockingIndexer {
+    async indexRepo(...args) {
+      markIndexStarted();
+      await indexGate;
+
+      return new IndexerService().indexRepo(...args);
+    }
+  }
+
+  const { handlers } = await loadMain({ userData, indexerClass: BlockingIndexer });
+  const add = handlers.get("repositories:add");
+  const first = add({ sender: {} }, repoUrl);
+
+  await indexStarted;
+
+  // `/repo/` and `/repo.git` name the same repository, so the trailing-slash
+  // variant must be rejected instead of cloning a second copy.
+  await assert.rejects(
+    () => add({ sender: {} }, `${repoUrl}/`),
+    { message: /already being added/i },
+  );
+
+  releaseIndex();
+  const result = await first;
+  assert.strictEqual(result.name, path.basename(repo));
+  assert.strictEqual(
+    (await handlers.get("repositories:list")({ sender: {} })).length,
+    1,
+  );
 });
 
 test("rejects an invalid repository URL before cloning anything", async () => {

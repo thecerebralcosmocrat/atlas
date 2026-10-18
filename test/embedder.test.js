@@ -220,6 +220,32 @@ test("reports the service's status when a request fails", async () => {
   );
 });
 
+test("aborts a request that never answers instead of hanging the index", async () => {
+  let observedSignal;
+  const impl = (url, init) => {
+    observedSignal = init.signal;
+
+    // Stands in for a network call that connects but never responds.
+    return new Promise((resolve, reject) => {
+      init.signal.addEventListener("abort", () => reject(init.signal.reason), {
+        once: true,
+      });
+    });
+  };
+
+  await assert.rejects(
+    () =>
+      createNimEmbedder({
+        apiKey: "k",
+        fetchImpl: impl,
+        requestTimeoutMs: 5,
+      }).embedPassages(["a"]),
+    (error) => error.name === "TimeoutError",
+  );
+
+  assert.ok(observedSignal.aborted);
+});
+
 test("makes no request when there is nothing to embed", async () => {
   const { requests, impl } = recordingFetch();
 

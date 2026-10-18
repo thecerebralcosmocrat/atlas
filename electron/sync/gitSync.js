@@ -142,6 +142,7 @@ async function applyRepositoryUpdate(
 
 module.exports = {
   GIT_TIMEOUT_MS,
+  gitEnvironment,
   createGit,
   getCurrentBranch,
   getLocalHeadSha,

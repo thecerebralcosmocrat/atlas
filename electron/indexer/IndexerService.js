@@ -21,7 +21,7 @@ function notifyProgress(mainWindow, payload) {
 
 class IndexerService {
   async indexRepo(repoPath, mainWindow, metadata = {}, options = {}) {
-    const { timeoutMs, embedder } = options;
+    const { timeoutMs, embedder, onEmbeddingStart } = options;
     // A deadline rather than Promise.race: the loop checks it between files and
     // aborts before the synchronous write transaction, so nothing is committed.
     const deadline = timeoutMs == null ? Infinity : Date.now() + timeoutMs;
@@ -108,6 +108,10 @@ class IndexerService {
       }
 
       try {
+        // The last file tick has already been sent, so without this the UI
+        // shows a complete-looking file count while the network call runs.
+        if (chunkTexts.length > 0) onEmbeddingStart?.();
+
         const vectors = await embedder.embedPassages(chunkTexts);
 
         // A short response would shift every later vector onto the wrong chunk,
