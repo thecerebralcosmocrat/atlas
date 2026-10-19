@@ -273,6 +273,7 @@ class IndexerService {
           const targetPath = importResolver.resolve(
             record.path,
             imported.specifier,
+            imported.type,
           );
           const targetFileId =
             targetPath === null

@@ -114,14 +114,22 @@ in the `symbols` and `imports` tables, resolving relative imports to a
 the file/symbol/import graph and the Explorer renders it.
 
 - Extraction: `electron/indexer/SymbolExtractor.js` is a per-language dispatch
-  table (JS/TS/JSX/TSX and Python) returning one shared record shape. It is
-  heuristic rather than a parser, so tree-sitter can replace a single entry
+  table (JS/TS/JSX/TSX, Python, and C/C++) returning one shared record shape.
+  The C/C++ entry covers functions, out-of-line constructors, destructors and
+  operators, classes/structs/unions/enums/namespaces, typedefs, and macros. It
+  is heuristic rather than a parser, so tree-sitter can replace a single entry
   later without the indexer or the query layer changing. A language with no
   extractor returns empty results, never an index failure.
 - Resolution: `electron/indexer/ImportResolver.js` handles relative JS/TS
-  (extension and `/index.*` inference, and a `.js` specifier onto a `.ts` file)
-  and Python dotted relative imports (leading dots, `__init__.py`). Anything it
-  cannot map onto an indexed path stays external.
+  (extension and `/index.*` inference, and a `.js` specifier onto a `.ts` file),
+  Python dotted relative imports (leading dots, `__init__.py`), and quoted
+  C/C++ includes (next to the including file, then from the repository root).
+  Angle-bracket includes are system headers and stay external, as does anything
+  it cannot map onto an indexed path.
+- File discovery: `electron/indexer/FileTraverser.js` decides what is indexed.
+  It accepts C/C++ source and header extensions (`.c`, `.h`, `.cc`, `.cpp`,
+  `.cxx`, `.hpp`, `.hxx`, `.inl`, `.ipp`, `.tpp`, …) plus `.cmake` and
+  `CMakeLists.txt`, while skipping build output, dependencies, and binaries.
 - Indexing: `electron/indexer/IndexerService.js` extracts while reading — before
   the synchronous write transaction — then inserts files, symbols, and imports
   as one transaction, so a re-index replaces the previous graph wholesale.

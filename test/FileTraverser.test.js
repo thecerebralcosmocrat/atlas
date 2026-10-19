@@ -77,6 +77,43 @@ test("collects C# and other newly allowed source files", async () => {
   );
 });
 
+test("collects C, C++ and CMake build files", async () => {
+  const root = makeTempDir("atlas-traverse-c-");
+  const extensions = [
+    "c",
+    "h",
+    "cc",
+    "cpp",
+    "cxx",
+    "c++",
+    "hh",
+    "hpp",
+    "hxx",
+    "inl",
+    "ipp",
+    "tpp",
+    "cmake",
+  ];
+
+  for (const extension of extensions) {
+    writeFixtureFile(root, `src/file.${extension}`, "content\n");
+  }
+
+  writeFixtureFile(root, "CMakeLists.txt", "project(demo)\n");
+  // The basename allowance must not turn every .txt file into source.
+  writeFixtureFile(root, "notes.txt", "not source\n");
+
+  const files = await new FileTraverser().traverse(root);
+
+  assert.deepStrictEqual(
+    toRelativeSet(files),
+    new Set([
+      ...extensions.map((extension) => `src/file.${extension}`),
+      "CMakeLists.txt",
+    ]),
+  );
+});
+
 test("counts non-empty lines as loc", async () => {
   const files = await new FileTraverser().traverse(makeFixtureRepo());
   const indexFile = files.find((file) => file.path.endsWith("index.js"));

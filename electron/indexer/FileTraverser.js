@@ -39,8 +39,17 @@ const ALLOWED_EXTENSIONS = new Set([
   ".rs",
   ".java",
   ".c",
+  ".cc",
   ".cpp",
+  ".cxx",
+  ".c++",
   ".h",
+  ".hh",
+  ".hpp",
+  ".hxx",
+  ".inl",
+  ".ipp",
+  ".tpp",
   ".cs",
   ".rb",
   ".php",
@@ -50,7 +59,12 @@ const ALLOWED_EXTENSIONS = new Set([
   ".scala",
   ".sh",
   ".sql",
+  // CMake build scripts. CMakeLists.txt has no extension, so it is matched by
+  // basename in _isAllowedFile.
+  ".cmake",
 ]);
+
+const ALLOWED_BASENAMES = new Set(["CMakeLists.txt"]);
 
 const MAX_FILE_SIZE_BYTES = 500 * 1024;
 
@@ -98,7 +112,7 @@ class FileTraverser {
 
       const extension = path.extname(entry.name);
 
-      if (!ALLOWED_EXTENSIONS.has(extension)) {
+      if (!this._isAllowedFile(entry.name, extension)) {
         continue;
       }
 
@@ -124,6 +138,12 @@ class FileTraverser {
     const lowerName = fileName.toLowerCase();
 
     return SKIP_FILE_SUFFIXES.some((suffix) => lowerName.endsWith(suffix));
+  }
+
+  _isAllowedFile(fileName, extension) {
+    return (
+      ALLOWED_BASENAMES.has(fileName) || ALLOWED_EXTENSIONS.has(extension)
+    );
   }
 }
 

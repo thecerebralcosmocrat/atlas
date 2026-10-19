@@ -9,6 +9,20 @@ const pathPosix = require("path").posix;
 
 const JAVASCRIPT_EXTENSIONS = [".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs"];
 const PYTHON_EXTENSION = ".py";
+const C_EXTENSIONS = new Set([
+  ".c",
+  ".h",
+  ".cc",
+  ".cpp",
+  ".cxx",
+  ".c++",
+  ".hh",
+  ".hpp",
+  ".hxx",
+  ".inl",
+  ".ipp",
+  ".tpp",
+]);
 
 function toPosix(filePath) {
   return String(filePath ?? "").replace(/\\/g, "/");
@@ -65,6 +79,20 @@ function resolveRelativePython(baseDir, specifier, byPath) {
   return firstMatch(candidates, byPath);
 }
 
+// C/C++ includes are either relative to the including file or written from the
+// repository root (`"src/core/foo.h"`). Include directories passed to the
+// compiler are not known here, so the two common spellings are tried and
+// anything else stays external.
+function resolveCInclude(baseDir, specifier, byPath) {
+  const normalized = toPosix(specifier);
+  const candidates = [
+    pathPosix.normalize(pathPosix.join(baseDir, normalized)),
+    pathPosix.normalize(normalized),
+  ];
+
+  return firstMatch(candidates, byPath);
+}
+
 function firstMatch(candidates, byPath) {
   for (const candidate of candidates) {
     const original = byPath.get(candidate);
@@ -85,13 +113,21 @@ function createImportResolver(filePaths) {
     byPath.set(toPosix(filePath), filePath);
   }
 
-  function resolve(sourcePath, specifier) {
+  function resolve(sourcePath, specifier, importType) {
     const normalizedSpecifier = String(specifier ?? "").trim();
 
     if (!normalizedSpecifier) return null;
 
     const source = toPosix(sourcePath);
     const baseDir = pathPosix.dirname(source);
+
+    if (C_EXTENSIONS.has(pathPosix.extname(source).toLowerCase())) {
+      // `<...>` is a system/third-party header; only quoted includes can name
+      // a header that this repository indexed.
+      if (importType === "system-include") return null;
+
+      return resolveCInclude(baseDir, normalizedSpecifier, byPath);
+    }
 
     // "./x", "../x", ".x" and "..x" are all relative.
     if (!normalizedSpecifier.startsWith(".")) {

@@ -75,6 +75,57 @@ test("resolves Python relative imports across dotted packages", () => {
   assert.strictEqual(resolver.resolve("pkg\\mod.py", "."), "pkg\\__init__.py");
 });
 
+const C_FILES = [
+  "src\\main.cpp",
+  "src\\core\\util.h",
+  "src\\local.hpp",
+  "include\\public.hpp",
+];
+
+test("resolves quoted C includes relative to the including file", () => {
+  const resolver = createImportResolver(C_FILES);
+
+  assert.strictEqual(
+    resolver.resolve("src\\main.cpp", "local.hpp", "include"),
+    "src\\local.hpp",
+  );
+  assert.strictEqual(
+    resolver.resolve("src\\main.cpp", "core/util.h", "include"),
+    "src\\core\\util.h",
+  );
+});
+
+test("resolves quoted C includes from the repository root", () => {
+  const resolver = createImportResolver(C_FILES);
+
+  assert.strictEqual(
+    resolver.resolve("src\\core\\util.h", "include/public.hpp", "include"),
+    "include\\public.hpp",
+  );
+});
+
+test("leaves C system includes external", () => {
+  const resolver = createImportResolver(C_FILES);
+
+  assert.strictEqual(
+    resolver.resolve("src\\main.cpp", "vector", "system-include"),
+    null,
+  );
+  // An angle-bracket include is not repository content even when a file with
+  // the same name was indexed.
+  assert.strictEqual(
+    resolver.resolve("src\\main.cpp", "local.hpp", "system-include"),
+    null,
+  );
+});
+
+test("keeps non-C resolution for files that are not C/C++ sources", () => {
+  assert.strictEqual(
+    jsResolver().resolve("src\\index.js", "core/util.h"),
+    null,
+  );
+});
+
 test("ignores empty specifiers", () => {
   assert.strictEqual(jsResolver().resolve("src\\index.js", ""), null);
   assert.strictEqual(jsResolver().resolve("src\\index.js", null), null);

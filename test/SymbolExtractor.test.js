@@ -232,6 +232,145 @@ test("collects Python plain and from-imports", () => {
   ]);
 });
 
+test("extracts C/C++ functions with block ranges and export state", () => {
+  const { symbols } = extract("cpp", [
+    "namespace app {",
+    "int add(int a, int b) {",
+    "  return a + b;",
+    "}",
+    "static void helper() {}",
+    "class Widget {",
+    " public:",
+    "  void render();",
+    "};",
+    "}",
+  ]);
+
+  assert.deepStrictEqual(
+    symbols.map((symbol) => [
+      symbol.name,
+      symbol.kind,
+      symbol.isExported,
+      symbol.lineStart,
+      symbol.lineEnd,
+    ]),
+    [
+      ["app", "namespace", true, 1, 10],
+      ["add", "function", true, 2, 4],
+      ["helper", "function", false, 5, 5],
+      ["Widget", "class", true, 6, 9],
+      ["render", "function", true, 8, 8],
+    ],
+  );
+});
+
+test("recognizes out-of-line constructors, destructors and operators", () => {
+  const { symbols } = extract("cpp", [
+    "Widget::Widget(int size) {",
+    "  this->size = size;",
+    "}",
+    "Widget::~Widget() {",
+    "}",
+    "int Widget::operator+(const Widget &other) const {",
+    "  return 0;",
+    "}",
+    "Widget::operator bool() const {",
+    "  return true;",
+    "}",
+    "std::string Foo::name() const {",
+    '  return "x";',
+    "}",
+  ]);
+
+  assert.deepStrictEqual(
+    symbols.map((symbol) => [symbol.name, symbol.lineStart, symbol.lineEnd]),
+    [
+      ["Widget::Widget", 1, 3],
+      ["Widget::~Widget", 4, 5],
+      ["Widget::operator+", 6, 8],
+      ["Widget::operator bool", 9, 11],
+      ["Foo::name", 12, 14],
+    ],
+  );
+});
+
+test("extracts C typedefs, container definitions and macros", () => {
+  const { symbols } = extract("h", [
+    "typedef unsigned long size_type;",
+    "typedef struct Point {",
+    "  int x;",
+    "  int y;",
+    "} Point;",
+    "typedef void (*callback_fn)(int);",
+    "typedef enum Color { Red, Green } Color;",
+    "#define SQUARE(x) ((x) * (x))",
+    "#define LOG(...) \\",
+    "  do { log(__VA_ARGS__); } while (0)",
+  ]);
+
+  assert.deepStrictEqual(
+    symbols.map((symbol) => [
+      symbol.name,
+      symbol.kind,
+      symbol.lineStart,
+      symbol.lineEnd,
+    ]),
+    [
+      ["size_type", "typedef", 1, 1],
+      ["Point", "struct", 2, 5],
+      ["callback_fn", "typedef", 6, 6],
+      ["Color", "enum", 7, 7],
+      ["SQUARE", "macro", 8, 8],
+      ["LOG", "macro", 9, 10],
+    ],
+  );
+});
+
+test("does not mistake container-keyword return types for containers", () => {
+  const { symbols } = extract("c", [
+    "struct Point *make_point(void) {",
+    "  return NULL;",
+    "}",
+    "union Value make_value(void);",
+  ]);
+
+  assert.deepStrictEqual(
+    symbols.map((symbol) => [symbol.name, symbol.kind]),
+    [
+      ["make_point", "function"],
+      ["make_value", "function"],
+    ],
+  );
+});
+
+test("does not extract plain C expressions or calls as functions", () => {
+  const { symbols } = extract("cpp", [
+    "std::move(value);",
+    "return helper(1);",
+    "result = compute();",
+  ]);
+
+  assert.deepStrictEqual(symbols, []);
+});
+
+test("collects and dedupes C includes, marking system headers", () => {
+  const { imports } = extract("cpp", [
+    "#include <vector>",
+    "#include <vector>",
+    '#include "core/util.h"',
+    '#  include "core/util.h"',
+    "#include <cstdint>",
+    '#include "local.hpp" // local',
+  ]);
+
+  assert.deepStrictEqual(imports, [
+    { specifier: "vector", type: "system-include" },
+    { specifier: "core/util.h", type: "include" },
+    { specifier: "cstdint", type: "system-include" },
+    { specifier: "local.hpp", type: "include" },
+  ]);
+});
+
 test("returns empty results for a language with no extractor", () => {
   assert.deepStrictEqual(
     extractFileSymbols({ language: "go", rawContent: "package main" }),

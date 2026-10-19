@@ -8,6 +8,22 @@
 
 const JAVASCRIPT_LANGUAGES = ["js", "jsx", "ts", "tsx", "mjs", "cjs"];
 const PYTHON_LANGUAGES = ["py"];
+// C and C++ share one extractor. Header extensions are included so a
+// repository's public API shows up in the graph even with no .c/.cpp file.
+const C_LANGUAGES = [
+  "c",
+  "h",
+  "cc",
+  "cpp",
+  "cxx",
+  "c++",
+  "hh",
+  "hpp",
+  "hxx",
+  "inl",
+  "ipp",
+  "tpp",
+];
 
 const LANGUAGE_GROUPS = new Map();
 for (const language of JAVASCRIPT_LANGUAGES) {
@@ -15,6 +31,9 @@ for (const language of JAVASCRIPT_LANGUAGES) {
 }
 for (const language of PYTHON_LANGUAGES) {
   LANGUAGE_GROUPS.set(language, "python");
+}
+for (const language of C_LANGUAGES) {
+  LANGUAGE_GROUPS.set(language, "c");
 }
 
 const MAX_SIGNATURE_LENGTH = 200;
@@ -414,6 +433,459 @@ function dedupeImports(imports) {
   return unique;
 }
 
+// C and C++ are parsed by line-oriented heuristics, like the other languages.
+// The scanner blanks comments and string/char literals before matching, so
+// braces in comments and format strings cannot throw off block ranges.
+const C_MAX_DECLARATION_SCAN_LINES = 40;
+const C_MAX_BLOCK_SCAN_LINES = 5000;
+
+const C_STATEMENT_KEYWORDS = new Set([
+  "if",
+  "else",
+  "for",
+  "while",
+  "do",
+  "switch",
+  "case",
+  "default",
+  "goto",
+  "return",
+  "sizeof",
+  "alignof",
+  "decltype",
+  "static_assert",
+  "throw",
+  "new",
+  "delete",
+  "using",
+  "typedef",
+  "namespace",
+  "public",
+  "private",
+  "protected",
+  "co_return",
+  "co_await",
+  "co_yield",
+]);
+
+// Replaces comments and the contents of string/char literals with spaces while
+// preserving one output line per input line. Multiline block comments keep
+// their line count, so line ranges still point at the original source.
+function stripCCommentsAndStrings(lines) {
+  const stripped = [];
+  let inBlockComment = false;
+
+  for (const line of lines) {
+    let result = "";
+    let quote = null;
+
+    for (let index = 0; index < line.length; index += 1) {
+      const char = line[index];
+
+      if (inBlockComment) {
+        if (char === "*" && line[index + 1] === "/") {
+          inBlockComment = false;
+          index += 1;
+          result += "  ";
+        } else {
+          result += " ";
+        }
+
+        continue;
+      }
+
+      if (quote) {
+        if (char === "\\") {
+          index += 1;
+          result += "  ";
+        } else {
+          if (char === quote) quote = null;
+          result += " ";
+        }
+
+        continue;
+      }
+
+      if (char === "/" && line[index + 1] === "/") break;
+
+      if (char === "/" && line[index + 1] === "*") {
+        inBlockComment = true;
+        index += 1;
+        result += "  ";
+        continue;
+      }
+
+      if (char === '"' || char === "'") {
+        quote = char;
+        result += " ";
+        continue;
+      }
+
+      result += char;
+    }
+
+    stripped.push(result);
+  }
+
+  return stripped;
+}
+
+function findCBlockEnd(lines, startIndex) {
+  const limit = Math.min(lines.length, startIndex + C_MAX_BLOCK_SCAN_LINES);
+  let depth = 0;
+  let opened = false;
+
+  for (let index = startIndex; index < limit; index += 1) {
+    for (const char of lines[index]) {
+      if (char === "{") {
+        depth += 1;
+        opened = true;
+      } else if (char === "}") {
+        if (depth > 0) depth -= 1;
+
+        if (opened && depth === 0) return index;
+      }
+    }
+  }
+
+  return opened ? limit - 1 : startIndex;
+}
+
+// Finds the `{` that opens a function body or the `;` that ends a prototype,
+// ignoring parentheses (and therefore default arguments) along the way.
+function findCDeclarationEnd(lines, startIndex) {
+  const limit = Math.min(
+    lines.length,
+    startIndex + C_MAX_DECLARATION_SCAN_LINES,
+  );
+  let depth = 0;
+  let sawParen = false;
+
+  for (let index = startIndex; index < limit; index += 1) {
+    for (const char of lines[index]) {
+      if (char === "(") {
+        depth += 1;
+        sawParen = true;
+        continue;
+      }
+
+      if (char === ")") {
+        if (depth > 0) depth -= 1;
+        continue;
+      }
+
+      if (!sawParen || depth > 0) continue;
+
+      if (char === "{") return { kind: "block", lineIndex: index };
+      if (char === ";") return { kind: "declaration", lineIndex: index };
+    }
+  }
+
+  return null;
+}
+
+function isCTypePrefix(prefix) {
+  const trimmed = prefix.trim();
+
+  if (!trimmed) return false;
+  // A return type never contains these; seeing one means this is an
+  // expression (assignment, arithmetic, a call) rather than a declaration.
+  if (/[=+\-%!?|^;{}()]/.test(trimmed)) return false;
+  // A `::` chain belonging to the function name must not be split off as the
+  // return type (`Widget::operator bool`), and `std::move(x)` is a call.
+  if (/:$/.test(trimmed)) return false;
+
+  const firstWord = /^[A-Za-z_]\w*/.exec(trimmed)?.[0];
+
+  return firstWord === undefined || !C_STATEMENT_KEYWORDS.has(firstWord);
+}
+
+// Out-of-line constructors and destructors have no return type, so they are
+// matched separately. Requiring the owner to match the final segment rejects
+// ordinary calls such as `std::move(x)`.
+function isConstructorLike(name) {
+  const parts = name.split("::");
+
+  if (parts.length < 2) return false;
+
+  return (
+    parts[parts.length - 2] === parts[parts.length - 1].replace(/^~/, "")
+  );
+}
+
+const C_OPERATOR_FUNCTION =
+  /^\s*([A-Za-z_][\w:<>,\[\]\s*&]*?)\s+((?:[A-Za-z_]\w*::)*operator\s*[^\s(]+)\s*\(/;
+const C_QUALIFIED_OPERATOR =
+  /^\s*((?:[A-Za-z_]\w*::)*operator\s*[^\s(]+)\s*\(/;
+const C_QUALIFIED_FUNCTION =
+  /^\s*(?:template\s*<[^>]*>\s*)?(?:explicit\s+)?([A-Za-z_]\w*(?:::[A-Za-z_~]\w*)+)\s*\(/;
+// The return type and the name must be separated by whitespace, which keeps
+// namespace-qualified calls such as `std::move(x)` from looking like a
+// declaration with `s` as the return type.
+const C_GENERAL_FUNCTION =
+  /^\s*([A-Za-z_][\w:<>,\[\]\s*&]*?)\s+(?:[*&]+\s*)?([A-Za-z_~]\w*(?:::[A-Za-z_~]\w*)*)\s*\(/;
+
+function matchCFunction(line) {
+  const operatorWithType = C_OPERATOR_FUNCTION.exec(line);
+
+  if (operatorWithType && isCTypePrefix(operatorWithType[1])) {
+    return operatorWithType[2].replace(/\s+/g, " ");
+  }
+
+  const qualifiedOperator = C_QUALIFIED_OPERATOR.exec(line);
+
+  if (qualifiedOperator) return qualifiedOperator[1].replace(/\s+/g, " ");
+
+  const qualified = C_QUALIFIED_FUNCTION.exec(line);
+
+  if (qualified && isConstructorLike(qualified[1])) return qualified[1];
+
+  const general = C_GENERAL_FUNCTION.exec(line);
+
+  if (!general || !isCTypePrefix(general[1])) return null;
+  if (C_STATEMENT_KEYWORDS.has(general[2])) return null;
+
+  return general[2];
+}
+
+const C_CONTAINER_PATTERNS = [
+  {
+    kind: "class",
+    regex:
+      /^\s*(?:template\s*<[^>]*>\s*)?(?:typedef\s+)?class\s+([A-Za-z_]\w*)/,
+  },
+  {
+    kind: "struct",
+    regex:
+      /^\s*(?:template\s*<[^>]*>\s*)?(?:typedef\s+)?struct\s+([A-Za-z_]\w*)/,
+  },
+  {
+    kind: "union",
+    regex:
+      /^\s*(?:template\s*<[^>]*>\s*)?(?:typedef\s+)?union\s+([A-Za-z_]\w*)/,
+  },
+  {
+    kind: "enum",
+    regex:
+      /^\s*(?:typedef\s+)?enum(?:\s+class|\s+struct)?\s+([A-Za-z_]\w*)/,
+  },
+  {
+    kind: "namespace",
+    regex: /^\s*(?:inline\s+)?namespace\s+([A-Za-z_]\w*)/,
+  },
+];
+
+// `struct Foo *makeFoo(void)` starts with a container keyword but is a
+// function. A `(` before the first `{` or `;` after the name means this is a
+// declaration with a type specifier, not a definition of the container.
+function matchCContainer(line) {
+  for (const pattern of C_CONTAINER_PATTERNS) {
+    const match = pattern.regex.exec(line);
+
+    if (!match) continue;
+
+    const rest = line.slice(match[0].length);
+    const paren = rest.indexOf("(");
+    const brace = rest.indexOf("{");
+    const semicolon = rest.indexOf(";");
+
+    if (
+      paren !== -1 &&
+      (brace === -1 || paren < brace) &&
+      (semicolon === -1 || paren < semicolon)
+    ) {
+      return null;
+    }
+
+    return { name: match[1], kind: pattern.kind };
+  }
+
+  return null;
+}
+
+function findCTypedefEnd(lines, startIndex) {
+  const limit = Math.min(lines.length, startIndex + C_MAX_DECLARATION_SCAN_LINES);
+
+  for (let index = startIndex; index < limit; index += 1) {
+    if (lines[index].includes(";")) return index;
+  }
+
+  return startIndex;
+}
+
+function matchCTypedef(lines, index) {
+  const line = lines[index];
+  const kindWord =
+    /^\s*typedef\s+(?:enum\s+class|(?:struct|union|enum|class))\b/
+      .exec(line)?.[0]
+      .trim()
+      .split(/\s+/)
+      .pop() ?? null;
+  let name = null;
+  let kind = kindWord ?? "typedef";
+  let lineEnd = index + 1;
+
+  if (line.includes("{")) {
+    const endIndex = findCBlockEnd(lines, index);
+    const text = lines.slice(index, endIndex + 1).join("\n");
+    const named = /^\s*typedef\s+(?:enum\s+class|(struct|union|enum|class))\s+([A-Za-z_]\w*)/.exec(
+      line,
+    );
+
+    if (named) {
+      kind = named[1] ?? "enum";
+      name = named[2];
+    } else {
+      const afterBrace = text.slice(text.lastIndexOf("}") + 1);
+      const alias = /^\s*(?:[A-Za-z_]\w*\s+)*([A-Za-z_]\w*)/.exec(
+        afterBrace,
+      );
+
+      name = alias?.[1] ?? null;
+    }
+
+    lineEnd = endIndex + 1;
+  } else {
+    const endIndex = findCTypedefEnd(lines, index);
+    const body = lines
+      .slice(index, endIndex + 1)
+      .join(" ")
+      .replace(/^\s*typedef\b/, "")
+      .replace(/;[\s\S]*$/, "");
+    const functionPointer = /\(\s*\*\s*([A-Za-z_]\w*)\s*\)/.exec(body);
+
+    if (functionPointer) {
+      name = functionPointer[1];
+    } else {
+      const identifiers =
+        body.replace(/\[[^\]]*\]/g, " ").match(/[A-Za-z_]\w*/g) ?? [];
+
+      name = identifiers[identifiers.length - 1] ?? null;
+    }
+
+    lineEnd = endIndex + 1;
+  }
+
+  if (!name) return null;
+
+  return {
+    name,
+    kind,
+    signature: truncateSignature(line),
+    lineStart: index + 1,
+    lineEnd,
+    isExported: true,
+  };
+}
+
+function extractCSymbols(lines) {
+  const code = stripCCommentsAndStrings(lines);
+  const symbols = [];
+
+  for (let index = 0; index < code.length; index += 1) {
+    const line = code[index];
+
+    if (!line.trim()) continue;
+
+    const defineMatch = /^\s*#\s*define\s+([A-Za-z_]\w*)/.exec(line);
+
+    if (defineMatch) {
+      // Backslash-continued macros occupy every line through the last one
+      // ending in a backslash.
+      let lineEnd = index;
+
+      while (
+        lineEnd + 1 < lines.length &&
+        /\\\s*$/.test(lines[lineEnd])
+      ) {
+        lineEnd += 1;
+      }
+
+      symbols.push({
+        name: defineMatch[1],
+        kind: "macro",
+        signature: truncateSignature(lines[index]),
+        lineStart: index + 1,
+        lineEnd: lineEnd + 1,
+        isExported: true,
+      });
+      continue;
+    }
+
+    if (/^\s*#/.test(line)) continue;
+
+    if (/^\s*typedef\b/.test(line)) {
+      const symbol = matchCTypedef(code, index);
+
+      if (symbol) symbols.push(symbol);
+      continue;
+    }
+
+    const container = matchCContainer(line);
+
+    if (container) {
+      const lineEnd = line.includes("{")
+        ? findCBlockEnd(code, index) + 1
+        : index + 1;
+
+      symbols.push({
+        name: container.name,
+        kind: container.kind,
+        signature: truncateSignature(lines[index]),
+        lineStart: index + 1,
+        lineEnd,
+        isExported: !/^\s*static\b/.test(line),
+      });
+      continue;
+    }
+
+    if (!line.includes("(")) continue;
+
+    const name = matchCFunction(line);
+
+    if (!name) continue;
+
+    const end = findCDeclarationEnd(code, index);
+
+    if (!end) continue;
+
+    const lineEnd =
+      end.kind === "block"
+        ? findCBlockEnd(code, end.lineIndex) + 1
+        : end.lineIndex + 1;
+
+    symbols.push({
+      name,
+      kind: "function",
+      signature: truncateSignature(lines[index]),
+      lineStart: index + 1,
+      lineEnd,
+      isExported: !/^\s*static\b/.test(line),
+    });
+  }
+
+  return symbols;
+}
+
+function extractCImports(sourceText) {
+  const imports = [];
+
+  for (const line of splitLines(sourceText)) {
+    const match = /^\s*#\s*include\s*([<"])([^>"]+)[>"]/.exec(line);
+
+    if (match) {
+      // Angle brackets name system or third-party headers, which are resolved
+      // outside the repository, so the resolver leaves them as external.
+      imports.push({
+        specifier: match[2].trim(),
+        type: match[1] === "<" ? "system-include" : "include",
+      });
+    }
+  }
+
+  return dedupeImports(imports);
+}
+
 const EXTRACTORS = {
   javascript: {
     extractSymbols: extractJavaScriptSymbols,
@@ -422,6 +894,10 @@ const EXTRACTORS = {
   python: {
     extractSymbols: extractPythonSymbols,
     extractImports: extractPythonImports,
+  },
+  c: {
+    extractSymbols: extractCSymbols,
+    extractImports: extractCImports,
   },
 };
 
