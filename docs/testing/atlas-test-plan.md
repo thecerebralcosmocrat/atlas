@@ -41,7 +41,7 @@ deliberately small. Add a row only when a new risk appears or a defect escapes.
 |---|---|---|---|---|
 | J1 | First run: add repository, clone, index, persist across relaunch | User sees nothing, or loses their repository on restart | `test/repositories-add.integration.test.js:13`; backfill `:218` | Partial — no relaunch assertion |
 | J2 | Ask a grounded question without an API key | Core product promise fails offline; answers fabricate | `:259`, `:365`; retrieval/embedder tests | Partial — no renderer, no timeout path |
-| J3 | Profile A cannot read or mutate profile B's repository | Cross-profile data exposure / destructive bug | Switching, restart, secret-leak tests in `test/profiles.integration.test.js` | **Gap — expected to fail today** |
+| J3 | Profile A cannot read or mutate profile B's repository | Cross-profile data exposure / destructive bug | Switching, restart, secret-leak tests in `test/profiles.integration.test.js` | **Gap — test written** (`test/profile-isolation.integration.test.js`); expected to fail until handlers are scoped |
 | J4 | Refresh pulls a remote commit and re-indexes; dirty clones are protected | Stale or corrupted code intelligence | `test/repositories-sync.integration.test.js` (7 cases) | Strong; add failure-state cases |
 | J5 | Destructive actions affect only intended records | User's checkout deleted; profile data lost | `repositories-add.integration.test.js:292–385`; profile deletion tests | Strong; no renderer confirmation flow |
 | J6 | Broken happy paths fail understandably and leave prior state intact | Half-written clone, stuck UI, silent data loss | Invalid URL, duplicate add, malformed legacy | Partial — clone failure, AI timeout, corrupt settings |
@@ -170,10 +170,34 @@ read or mutate the other's data.
 restores the active profile; no key crosses IPC. Missing: any cross-profile
 request-path test.
 
-**Automation:** new `test/profile-isolation.integration.test.js`. The fix
+**Automation:** `test/profile-isolation.integration.test.js` (written, see
+below). The fix
 belongs in `electron/main.js` behind one helper that checks
 `repository.workspaceId === getActiveProfileId()` and is used by every
 ID-scoped handler.
+
+**Test status:** `test/profile-isolation.integration.test.js` is written and
+runs under `npm test`. It is expected to fail today; each failing test points
+at a handler that still needs the scoped lookup. Run it before changing any
+handler code.
+
+| Test | Contract row it covers |
+|---|---|
+| `repositories:list` and `get-repos` show only the active profile's repositories | `repositories:list`, `get-repos`, stale sidebar after switching |
+| Profile B cannot inspect or ask about A's repository | `repositories:inspect`, `repositories:ask` |
+| Profile B cannot read A's graph, start-here, impact, or ownership data | `get-graph`, `get-start-here`, `get-impact`, `get-ownership` |
+| Profile B cannot remove A's repository | `repositories:remove` (row and clone survive) |
+| Profile B cannot sync A's repository | `repositories:sync` (clone HEAD unchanged after a remote push) |
+| Profile B cannot discard A's local edits | `repositories:discard-changes` (uncommitted edit survives) |
+| Profile B cannot move A's repository into itself | `repositories:move` (delete this test if move-from-any-profile is kept) |
+| Profile A cannot read or change B's repository | Reverse direction: inspect, graph, sync, discard, remove |
+| Profile A's API key never appears under B | Settings, including events sent to the renderer |
+| Deleting B leaves A's repository and clone untouched | Profile deletion |
+
+Read-only channels (`get-graph` and friends, `get-repos`) pass if they reject
+or return nothing, but fail if the result mentions the other profile's file or
+symbol. Mutating channels must reject with `Repository not found.` and leave
+the owner's row, clone, git HEAD, and local edits unchanged.
 
 ### J4 — Refresh and conflict handling
 
@@ -301,7 +325,8 @@ profiles, so expect some to need updating.
 - Runs with `npm test` through Electron's Node for the `better-sqlite3` ABI.
 - Use `loadMain` and `makeGitFixtureRepo`; each file gets temp user-data.
 - Every meaningful step asserts an outcome; no fixed sleeps (`waitFor` only).
-- New files: `test/profile-isolation.integration.test.js`.
+- New file (written, expected to fail until J3 is fixed):
+  `test/profile-isolation.integration.test.js`.
 - Extend: add/relaunch, clone failure, chat timeout, sync failed-apply, corrupt
   settings.
 
