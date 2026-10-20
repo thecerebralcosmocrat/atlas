@@ -10,6 +10,7 @@ const {
   buildStartHere,
   detectEntryPoints,
   getStartHere,
+  hasCMainFunction,
   isTestPath,
 } = require("../electron/query/entrypoints");
 const { makeTempDir, cleanupTempDirs } = require("./helpers/tempDirs");
@@ -293,5 +294,66 @@ test("does not mix another repository's entry points into the reading path", () 
   assert.deepStrictEqual(
     getStartHere("repo-a").readingPath.map((item) => [item.path, item.fanIn]),
     [["index.js", 0]],
+  );
+});
+
+test("recognizes C/C++ test directories and files", () => {
+  for (const filePath of [
+    "umd/vpu_driver/unit_tests/main.cpp",
+    "validation/umd-test/main.cpp",
+    "validation/kmd-test/main.cpp",
+    "src/parser_test.cc",
+  ]) {
+    assert.ok(isTestPath(filePath), filePath);
+  }
+
+  for (const filePath of ["tools/intel-npu-smi/src/main.cpp", "src/contest/a.c"]) {
+    assert.ok(!isTestPath(filePath), filePath);
+  }
+});
+
+test("finds a main() definition and ignores look-alikes", () => {
+  assert.ok(hasCMainFunction("int main(int argc, char** argv) {\n}\n"));
+  assert.ok(hasCMainFunction("static void x();\nint main()\n{\n}\n"));
+  assert.ok(hasCMainFunction("int\nmain (void) {}\n"));
+  assert.ok(!hasCMainFunction("int domain(int x) { return x; }\n"));
+  assert.ok(!hasCMainFunction("// int main() was removed\nint run();\n"));
+  assert.ok(!hasCMainFunction("return main_loop();\n"));
+  assert.ok(!hasCMainFunction(""));
+});
+
+test("detects a C/C++ main() and leaves out test runners and headers", () => {
+  const files = [
+    { id: 1, path: "tools/cli/src/main.cpp", hasCMain: true },
+    { id: 2, path: "umd/unit_tests/main.cpp", hasCMain: true },
+    { id: 3, path: "validation/umd-test/main.cpp", hasCMain: true },
+    { id: 4, path: "include/api.h", hasCMain: true },
+    { id: 5, path: "src/lib.cpp", hasCMain: false },
+  ];
+
+  assert.deepStrictEqual(
+    detectEntryPoints({ files }).map((entry) => [entry.path, entry.reason]),
+    [["tools/cli/src/main.cpp", "C/C++ main()"]],
+  );
+});
+
+test("detects a C/C++ main() end to end", async () => {
+  freshDb();
+  const repo = makeFixtureRepo({
+    "tools/cli/src/main.cpp":
+      '#include "util.h"\nint main(int argc, char** argv) {\n  return helper();\n}\n',
+    "tools/cli/src/util.h": "int helper();\n",
+    "unit_tests/main.cpp": "int main() { return 0; }\n",
+    "src/domain.cpp": "int domain(int x) { return x; }\n",
+  });
+
+  const { repoId } = await new IndexerService().indexRepo(repo, {
+    webContents: { send() {} },
+  });
+  const { entries } = getStartHere(repoId);
+
+  assert.deepStrictEqual(
+    entries.map((entry) => [entry.path, entry.reason]),
+    [["tools/cli/src/main.cpp", "C/C++ main()"]],
   );
 });

@@ -82,7 +82,7 @@ async function launch() {
     return handler(EVENT, ...args);
   };
 
-  return { invoke, sentEvents };
+  return { handlers, invoke, sentEvents };
 }
 
 // Profile A (the seeded default) owns an indexed repository; profile B exists
@@ -146,22 +146,13 @@ function assertCloneIntact(repository) {
   );
 }
 
-test("repositories:list and get-repos show only the active profile's repositories", async () => {
+test("repositories:list shows only the active profile's repositories", async () => {
   const { invoke, profileA, repository } = await ownerAThenBecomeB();
 
   assert.deepStrictEqual(
     await invoke("repositories:list"),
     [],
     "profile B must not see profile A's repository in the sidebar list",
-  );
-
-  // get-repos returns repository metadata, not file names, so assertNoLeak
-  // cannot see a leak here; check the ids directly.
-  const allRepos = await invoke("get-repos").catch(() => []);
-
-  assert.ok(
-    !allRepos.some((item) => item.id === repository.id),
-    "get-repos must not list profile A's repository under profile B",
   );
 
   await invoke("profiles:switch", profileA.id);
@@ -274,26 +265,13 @@ test("profile B cannot discard profile A's local edits", async () => {
   );
 });
 
-// Moving between profiles is currently a product feature. This asserts the
-// plan's contract (the source must be in the active profile); if moving from
-// another profile is kept on purpose, delete this test and the J3 table row.
-test("profile B cannot move profile A's repository into itself", async () => {
-  const { invoke, profileA, profileB, repository } = await ownerAThenBecomeB();
+// Profiles are isolated: a repository stays in the profile it was added to.
+// There is no channel that moves one, and none that lists every profile's.
+test("no channel moves a repository between profiles or lists all of them", async () => {
+  const { handlers } = await launch();
 
-  await assert.rejects(() =>
-    invoke("repositories:move", {
-      repositoryId: repository.id,
-      profileId: profileB.id,
-    }),
-  );
-
-  await invoke("profiles:switch", profileA.id);
-
-  assert.deepStrictEqual(
-    (await invoke("repositories:list")).map((item) => item.id),
-    [repository.id],
-    "the repository must still belong to profile A",
-  );
+  assert.ok(!handlers.has("repositories:move"));
+  assert.ok(!handlers.has("get-repos"));
 });
 
 test("profile A cannot read or change profile B's repository", async () => {
@@ -373,26 +351,26 @@ test("profile A's API key never appears under profile B", async () => {
   assert.strictEqual((await invoke("settings:get")).ai.hasApiKey, true);
 });
 
-test("deleting profile B leaves profile A's repository and clone untouched", async () => {
+test("deleting profile B deletes only B's repositories and clones", async () => {
   const { invoke, profileA, profileB, repository } = await ownerAThenBecomeB();
 
-  // B owns a repository of its own, which moves to the default on deletion.
+  // B owns a repository of its own, which is deleted with it, not handed to A.
   const originB = makeGitFixtureRepo({ "b-only.js": "const b = 2;\n" });
   const repositoryB = await invoke("repositories:add", fileUrl(originB));
+
+  assert.ok(fs.existsSync(path.join(repositoryB.localPath, "b-only.js")));
 
   await invoke("profiles:switch", profileA.id);
   await invoke("profiles:remove", profileB.id);
 
-  const listed = (await invoke("repositories:list")).map((item) => item.id);
-
-  assert.ok(listed.includes(repository.id), "A's repository must remain");
-  assert.ok(
-    listed.includes(repositoryB.id),
-    "B's repository moves to the default profile",
+  assert.deepStrictEqual(
+    (await invoke("repositories:list")).map((item) => item.id),
+    [repository.id],
+    "only A's repository remains; B's was deleted, not moved",
   );
   assertCloneIntact(repository);
   assert.ok(
-    fs.existsSync(path.join(repositoryB.localPath, "b-only.js")),
-    "B's clone must survive its profile being deleted",
+    !fs.existsSync(repositoryB.localPath),
+    "B's clone must be deleted from disk with its profile",
   );
 });

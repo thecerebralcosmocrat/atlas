@@ -12,7 +12,6 @@ const {
   createProfile,
   updateProfile,
   deleteProfile,
-  moveRepositoryToProfile,
 } = require("../electron/db/profiles");
 const {
   listRepositories,
@@ -141,7 +140,7 @@ test("updates only the fields it is given", () => {
   assert.throws(() => updateProfile(null, { name: "Nope" }), /not found/i);
 });
 
-test("moves a repository by external id and filters lists by profile", () => {
+test("lists only the given profile's repositories, and there is no way to move one", () => {
   const db = freshDb();
   const work = createProfile({ name: "Work" });
   const [defaultProfile] = listProfiles();
@@ -163,43 +162,51 @@ test("moves a repository by external id and filters lists by profile", () => {
     listRepositories(work.id).map((repository) => repository.name),
     ["other"],
   );
-
-  assert.deepStrictEqual(moveRepositoryToProfile("atlas-1", work.id), {
-    id: "atlas-1",
-    profileId: work.id,
-  });
-
   assert.deepStrictEqual(
-    listRepositories(work.id).map((repository) => repository.name).sort(),
-    ["atlas", "other"],
+    listRepositories(defaultProfile.id).map((repository) => repository.name),
+    ["atlas"],
   );
-  assert.deepStrictEqual(listRepositories(defaultProfile.id), []);
 
-  assert.throws(() => moveRepositoryToProfile("missing", work.id), /Repository not found/i);
-  assert.throws(() => moveRepositoryToProfile("atlas-1", 9999), /Profile not found/i);
+  // Profiles are isolated: a repository stays in the profile it was added to.
+  assert.strictEqual(require("../electron/db/profiles").moveRepositoryToProfile, undefined);
 });
 
-test("deleting a profile moves its repositories to the default", () => {
+test("deleting a profile deletes its repositories and leaves other profiles alone", () => {
   const db = freshDb();
   const work = createProfile({ name: "Work" });
   const [defaultProfile] = listProfiles();
 
   insertRepository(db, {
+    name: "kept",
+    path: "C:/repos/kept",
+    externalId: "kept-1",
+    workspaceId: defaultProfile.id,
+  });
+  insertRepository(db, {
     name: "doomed",
     path: "C:/repos/doomed",
+    externalId: "doomed-1",
     workspaceId: work.id,
   });
-  const { id: repoId } = db
-    .prepare("SELECT id FROM repos WHERE root_path = ?")
-    .get("C:/repos/doomed");
-  db.prepare(
+
+  const rowId = (rootPath) =>
+    db.prepare("SELECT id FROM repos WHERE root_path = ?").get(rootPath)?.id;
+  const insertFile = db.prepare(
     `INSERT INTO files (repo_id, path, abs_path, language, loc, raw_content, indexed_at)
      VALUES (?, ?, ?, ?, ?, ?, ?)`,
-  ).run(repoId, "a.js", "C:/repos/doomed/a.js", "js", 1, "let a;\n", 123);
+  );
+  const doomedId = rowId("C:/repos/doomed");
+  const keptId = rowId("C:/repos/kept");
+
+  insertFile.run(doomedId, "a.js", "C:/repos/doomed/a.js", "js", 1, "let a;\n", 123);
+  insertFile.run(keptId, "b.js", "C:/repos/kept/b.js", "js", 1, "let b;\n", 123);
 
   assert.deepStrictEqual(deleteProfile(work.id), {
     id: work.id,
-    movedRepositoryCount: 1,
+    removedRepositoryCount: 1,
+    removedRepositories: [
+      { id: "doomed-1", name: "doomed", localPath: "C:/repos/doomed" },
+    ],
   });
 
   assert.strictEqual(findProfile(work.id), null);
@@ -208,13 +215,19 @@ test("deleting a profile moves its repositories to the default", () => {
     [DEFAULT_WORKSPACE_NAME],
   );
 
-  const [repository] = listRepositories(defaultProfile.id);
-  assert.strictEqual(repository.name, "doomed");
-  assert.strictEqual(repository.workspaceId, defaultProfile.id);
-  // The indexed data itself is untouched: deleting a profile is a filing
-  // decision, not a repository delete.
+  // The deleted profile's repository and everything derived from it is gone;
+  // nothing was handed to the default profile.
+  assert.strictEqual(rowId("C:/repos/doomed"), undefined);
   assert.strictEqual(
-    db.prepare("SELECT COUNT(*) AS n FROM files WHERE repo_id = ?").get(repoId).n,
+    db.prepare("SELECT COUNT(*) AS n FROM files WHERE repo_id = ?").get(doomedId).n,
+    0,
+  );
+  assert.deepStrictEqual(
+    listRepositories(defaultProfile.id).map((repository) => repository.name),
+    ["kept"],
+  );
+  assert.strictEqual(
+    db.prepare("SELECT COUNT(*) AS n FROM files WHERE repo_id = ?").get(keptId).n,
     1,
   );
 });

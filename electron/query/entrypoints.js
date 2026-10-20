@@ -42,12 +42,24 @@ const ENTRY_BASENAME_RANK = new Map(
 
 const SCRIPT_EXTENSIONS = [".js", ".jsx", ".ts", ".tsx"];
 
+// A C/C++ program starts at `main`. Only translation units are checked:
+// headers never define the program's entry point.
+const C_SOURCE_EXTENSION = /\.(c|cc|cpp|cxx)$/i;
+const C_MAIN_DEFINITION = /^[ \t]*(?:int|auto)\s+main\s*\(/m;
+
+function hasCMainFunction(content) {
+  return C_MAIN_DEFINITION.test(String(content ?? ""));
+}
+
 const DEFAULT_MAX_ENTRIES = 6;
 const DEFAULT_LIMIT = 12;
 
 // Test directories and file names are excluded from the reading path: a module
 // imported only by its own test is not a good first read.
-const TEST_DIRECTORY = /(^|\/)(__tests__|tests?|specs?)\//;
+// Also directories named like `unit_tests` or `umd-test`, which C/C++ projects
+// use for their test runners (each with its own main()).
+const TEST_DIRECTORY =
+  /(^|\/)(__tests__|tests?|specs?|[^/]*[-_]tests?)\//;
 const TEST_FILENAME = /(^|[.\-_])(test|spec)\.[a-z]+$/i;
 const PYTHON_TEST_FILENAME = /(^|\/)test_[^/]*\.py$/i;
 
@@ -125,6 +137,7 @@ function detectEntryPoints({
 }) {
   const fileIdByPath = new Map();
   const guardByPath = new Map();
+  const cMainByPath = new Map();
 
   for (const file of files) {
     if (!file || file.path === undefined || file.path === null) continue;
@@ -134,6 +147,7 @@ function detectEntryPoints({
     if (!fileIdByPath.has(posixPath)) {
       fileIdByPath.set(posixPath, file.id ?? null);
       guardByPath.set(posixPath, Boolean(file.hasMainGuard));
+      cMainByPath.set(posixPath, Boolean(file.hasCMain));
     }
   }
 
@@ -196,6 +210,21 @@ function detectEntryPoints({
 
   for (const candidate of guardMatches) {
     add(candidate, "Python __main__ guard");
+  }
+
+  // A C/C++ source file that defines main() is an entry. Test runners also
+  // define main(), so they are left out: they are not where the program starts.
+  const cMainMatches = [...fileIdByPath.keys()]
+    .filter(
+      (candidate) =>
+        cMainByPath.get(candidate) &&
+        C_SOURCE_EXTENSION.test(candidate) &&
+        !isTestPath(candidate),
+    )
+    .sort((left, right) => depth(left) - depth(right) || left.localeCompare(right));
+
+  for (const candidate of cMainMatches) {
+    add(candidate, "C/C++ main()");
   }
 
   return found.slice(0, Math.max(0, maxEntries));
@@ -313,6 +342,26 @@ function getStartHere(repositoryId) {
     .prepare("SELECT root_path FROM repos WHERE id = ?")
     .get(repoId);
 
+  // Only C/C++ translation units that mention `main` have their content read,
+  // so a large repository does not load every file just to look for entries.
+  const cMainIds = new Set(
+    db
+      .prepare(
+        `SELECT id, raw_content FROM files
+          WHERE repo_id = ?
+            AND instr(raw_content, 'main') > 0
+            AND (lower(path) LIKE '%.c' OR lower(path) LIKE '%.cc'
+                 OR lower(path) LIKE '%.cpp' OR lower(path) LIKE '%.cxx')`,
+      )
+      .all(repoId)
+      .filter((row) => hasCMainFunction(row.raw_content))
+      .map((row) => row.id),
+  );
+
+  for (const file of files) {
+    file.hasCMain = cMainIds.has(file.id);
+  }
+
   return buildStartHere({
     graph: getRepositoryGraph(repositoryId),
     files,
@@ -324,6 +373,7 @@ module.exports = {
   buildStartHere,
   detectEntryPoints,
   getStartHere,
+  hasCMainFunction,
   isTestPath,
   readPackageJson,
 };

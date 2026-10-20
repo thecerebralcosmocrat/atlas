@@ -60,13 +60,17 @@ test("main process exposes the profile IPC handlers", async () => {
     "profiles:update",
     "profiles:switch",
     "profiles:remove",
-    "repositories:move",
   ]) {
     assert.ok(handlers.has(channel), `expected ${channel}`);
   }
 
   // The old workspace channels are gone: one concept, not two.
   assert.ok(!handlers.has("workspaces:list"));
+
+  // Profiles are isolated: no channel moves a repository between them, and no
+  // channel lists every profile's repositories.
+  assert.ok(!handlers.has("repositories:move"));
+  assert.ok(!handlers.has("get-repos"));
 });
 
 test("creates, renames and validates profiles with readable errors", async () => {
@@ -258,23 +262,20 @@ test("deleting the active profile falls back to the default and broadcasts", asy
 
   const result = await app.invoke("profiles:remove", work.id);
 
-  assert.strictEqual(result.movedRepositoryCount, 1);
+  assert.strictEqual(result.removedRepositoryCount, 1);
 
   const pushed = app.sentEvents.find(
     (event) => event.channel === "settings:changed",
   );
 
   // The renderer is told about the default profile's settings, not the deleted
-  // profile's, and the visible repositories moved with them.
+  // profile's, and the deleted profile's repositories were deleted, not moved.
   assert.strictEqual(pushed.payload.profile.id, personal.id);
   assert.strictEqual(pushed.payload.general.theme, "light");
   assert.strictEqual(pushed.payload.ai.hasApiKey, false);
   assert.ok(channelsOf(app.sentEvents).includes("profiles:changed"));
   assert.ok(channelsOf(app.sentEvents).includes("repositories:changed"));
-  assert.deepStrictEqual(
-    (await app.invoke("repositories:list")).map((repository) => repository.name),
-    ["work-repo"],
-  );
+  assert.deepStrictEqual(await app.invoke("repositories:list"), []);
 
   // The fallback was persisted, not just resolved: a restart agrees.
   app = await launch(userData);

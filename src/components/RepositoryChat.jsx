@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import { ArrowUp } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -40,61 +40,26 @@ function Message({ role, content }) {
   );
 }
 
-export default function RepositoryChat({ repository, onAskRepository }) {
-  const [question, setQuestion] = useState("");
-  const [messages, setMessages] = useState([]);
-  const [isAsking, setIsAsking] = useState(false);
+export default function RepositoryChat({
+  repository,
+  chat,
+  onDraftChange,
+  onAsk,
+}) {
+  // The conversation is owned by the app (see useRepositoryChats) so it
+  // survives this tab being unmounted; this component only renders it.
+  const { messages, isAsking, draft: question } = chat;
   const messagesRef = useRef(null);
 
-  useEffect(() => {
-    setMessages([
-      {
-        role: "assistant",
-        content:
-          "Ask me onboarding questions about this codebase. I can help with the project overview, run commands, structure, and where to start reading.",
-      },
-    ]);
-    setQuestion("");
-    setIsAsking(false);
-  }, [repository?.id]);
-
+  // Runs on mount too, so returning to the tab lands on the latest message.
   useEffect(() => {
     if (messagesRef.current) {
       messagesRef.current.scrollTop = messagesRef.current.scrollHeight;
     }
   }, [messages, isAsking]);
 
-  const askQuestion = async (nextQuestion = question) => {
-    const trimmedQuestion = nextQuestion.trim();
-
-    if (!trimmedQuestion || isAsking) return;
-
-    setQuestion("");
-    setIsAsking(true);
-    setMessages((currentMessages) => [
-      ...currentMessages,
-      { role: "user", content: trimmedQuestion },
-    ]);
-
-    try {
-      const answer = await onAskRepository(repository.id, trimmedQuestion);
-
-      setMessages((currentMessages) => [
-        ...currentMessages,
-        { role: "assistant", content: answer },
-      ]);
-    } catch (err) {
-      setMessages((currentMessages) => [
-        ...currentMessages,
-        {
-          role: "assistant",
-          content:
-            err.message || "I could not answer that yet. Try another question.",
-        },
-      ]);
-    } finally {
-      setIsAsking(false);
-    }
+  const askQuestion = (nextQuestion = question) => {
+    onAsk(repository.id, nextQuestion);
   };
 
   return (
@@ -138,7 +103,7 @@ export default function RepositoryChat({ repository, onAskRepository }) {
         <input
           id="repo-question"
           value={question}
-          onChange={(event) => setQuestion(event.target.value)}
+          onChange={(event) => onDraftChange(repository.id, event.target.value)}
           onKeyDown={(event) => {
             if (event.key === "Enter") askQuestion();
           }}

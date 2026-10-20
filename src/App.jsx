@@ -9,6 +9,7 @@ import Sidebar from "./components/Sidebar";
 import Onboarding from "./pages/Onboarding";
 import Repository from "./pages/Repository";
 import Settings from "./pages/Settings";
+import { useRepositoryChats } from "./hooks/useRepositoryChats";
 
 function getRepositoryApi() {
   return window.electronAPI?.repositories;
@@ -217,6 +218,15 @@ export default function App() {
     return repositoryApi.ask(repositoryId, question);
   };
 
+  // Held here, above the router, so a conversation survives switching tabs,
+  // pages, and repositories. Dropped when the profile changes.
+  const chats = useRepositoryChats(handleAskRepository);
+  const { reset: resetChats, remove: removeChat } = chats;
+
+  useEffect(() => {
+    resetChats();
+  }, [activeProfile?.id, resetChats]);
+
   const handleSyncRepository = async (repositoryId) => {
     if (!repositoryApi) {
       throw new Error("Repository sync is only available in the Electron app.");
@@ -271,14 +281,6 @@ export default function App() {
     setRefreshToken((currentToken) => currentToken + 1);
   };
 
-  const handleMoveRepository = async (repositoryId, profileId) => {
-    if (!repositoryApi?.move) {
-      throw new Error("Profiles are only available in the Electron app.");
-    }
-
-    return repositoryApi.move(repositoryId, profileId);
-  };
-
   const handleCreateProfile = async (profile) => {
     if (!profileApi) {
       throw new Error("Profiles are only available in the Electron app.");
@@ -311,6 +313,7 @@ export default function App() {
     }
 
     await repositoryApi.remove(repositoryId);
+    removeChat(repositoryId);
 
     const remainingRepositories = repositories.filter(
       (repository) => repository.id !== repositoryId,
@@ -343,7 +346,6 @@ export default function App() {
               selectedRepositoryId={selectedRepositoryId}
               onSelectRepository={setSelectedRepositoryId}
               onSwitchProfile={handleSwitchProfile}
-              onMoveRepository={handleMoveRepository}
               onRequestDeleteRepository={handleDeleteRepository}
             />
 
@@ -374,7 +376,7 @@ export default function App() {
                       selectedRepository={selectedRepository}
                       selectedDetails={selectedDetails}
                       isInspecting={isInspecting}
-                      onAskRepository={handleAskRepository}
+                      chats={chats}
                       onSyncRepository={handleSyncRepository}
                       onDiscardRepositoryChanges={
                         handleDiscardRepositoryChanges

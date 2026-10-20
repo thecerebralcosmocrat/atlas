@@ -19,7 +19,6 @@ const {
   createProfile,
   updateProfile,
   deleteProfile,
-  moveRepositoryToProfile,
 } = require("./db/profiles");
 const { IndexerService } = require("./indexer/IndexerService");
 const {
@@ -213,6 +212,38 @@ function markRepositoryDeleted(localPath) {
 
 function wasRepositoryDeleted(localPath) {
   return deletedRepositoryPaths.has(path.resolve(localPath));
+}
+
+// A repository belongs to exactly one profile, and profiles are isolated: a
+// handler that takes a repository id may only act on one in the active
+// profile. Anything else looks the same as an id that does not exist, so an
+// id from another profile reveals nothing about it.
+function findActiveRepository(repositoryId) {
+  const repository = findRepository(repositoryId);
+
+  if (!repository) return null;
+
+  return Number(repository.workspaceId) === Number(getActiveProfileId())
+    ? repository
+    : null;
+}
+
+// Only delete a clone when it lives inside the folder the app manages. Imports
+// and legacy rows can point at a checkout the user already had, and removing
+// the repository must not delete the user's own working copy.
+async function removeManagedClone(repository) {
+  if (!isManagedRepositoryPath(repository.localPath)) return;
+
+  await fs
+    .rm(path.resolve(repository.localPath), { recursive: true, force: true })
+    .catch((error) => {
+      // The row is already gone, so the repository is deleted from the user's
+      // point of view; an orphaned folder is not worth failing the request.
+      console.warn(
+        `Failed to delete cloned folder ${repository.localPath}:`,
+        error,
+      );
+    });
 }
 
 // Indexes repositories that were recorded without an index (legacy imports, or
@@ -1108,7 +1139,17 @@ function registerIpcHandlers() {
   ipcMain.handle("profiles:remove", async (event, profileId) => {
     const mainWindow = BrowserWindow.fromWebContents(event.sender);
     const wasActive = getActiveProfileId() === Number(profileId);
+    // Deleting a profile deletes its repositories; they are never moved to
+    // another profile. The rows go in this synchronous call, and the deletion
+    // is recorded straight after with nothing awaited in between, so an
+    // in-flight backfill index cannot bring one back.
     const result = deleteProfile(profileId);
+
+    for (const repository of result.removedRepositories) {
+      markRepositoryDeleted(repository.localPath);
+    }
+
+    await Promise.all(result.removedRepositories.map(removeManagedClone));
 
     // Deleting the selected profile leaves the persisted selection pointing at
     // a row that no longer exists. Adopt the default now so every later read
@@ -1121,25 +1162,16 @@ function registerIpcHandlers() {
       mainWindow?.webContents?.send("repositories:changed");
     }
 
-    return result;
+    return {
+      id: result.id,
+      removedRepositoryCount: result.removedRepositoryCount,
+    };
   });
 
   // Scoped to the active profile: the sidebar shows one profile at a time,
   // while storage accounting and the legacy channels still see every row.
   ipcMain.handle("repositories:list", async () => {
     return listRepositories(getActiveProfileId());
-  });
-
-  ipcMain.handle("repositories:move", async (event, { repositoryId, profileId }) => {
-    const result = moveRepositoryToProfile(repositoryId, profileId);
-    const mainWindow = BrowserWindow.fromWebContents(event.sender);
-
-    // The source and target profile counts both changed, and a repository
-    // just left (or entered) the visible list.
-    mainWindow?.webContents?.send("profiles:changed");
-    mainWindow?.webContents?.send("repositories:changed");
-
-    return result;
   });
 
   ipcMain.handle("repositories:add", async (event, repositoryUrl) => {
@@ -1226,7 +1258,7 @@ function registerIpcHandlers() {
   });
 
   ipcMain.handle("repositories:remove", async (event, repositoryId) => {
-    const repository = findRepository(repositoryId);
+    const repository = findActiveRepository(repositoryId);
 
     if (!repository) {
       throw new Error("Repository not found.");
@@ -1241,21 +1273,7 @@ function registerIpcHandlers() {
       throw new Error("Repository not found.");
     }
 
-    // Only delete the clone when it lives inside the folder the app manages.
-    // Imports and legacy rows can point at a checkout the user already had, and
-    // removing the repository must not delete the user's own working copy.
-    if (isManagedRepositoryPath(repository.localPath)) {
-      await fs
-        .rm(path.resolve(repository.localPath), { recursive: true, force: true })
-        .catch((error) => {
-          // The row is already gone, so the repository is deleted from the user's
-          // point of view; an orphaned folder is not worth failing the request.
-          console.warn(
-            `Failed to delete cloned folder ${repository.localPath}:`,
-            error,
-          );
-        });
-    }
+    await removeManagedClone(repository);
 
     BrowserWindow.fromWebContents(event.sender)?.webContents?.send(
       "repositories:changed",
@@ -1266,7 +1284,7 @@ function registerIpcHandlers() {
   });
 
   ipcMain.handle("repositories:inspect", async (_, repositoryId) => {
-    const repository = findRepository(repositoryId);
+    const repository = findActiveRepository(repositoryId);
 
     if (!repository) {
       throw new Error("Repository not found.");
@@ -1291,7 +1309,7 @@ function registerIpcHandlers() {
       return summarizeSync(results);
     }
 
-    const repository = findRepository(repositoryId);
+    const repository = findActiveRepository(repositoryId);
 
     if (!repository) {
       throw new Error("Repository not found.");
@@ -1309,7 +1327,7 @@ function registerIpcHandlers() {
   ipcMain.handle(
     "repositories:discard-changes",
     async (event, repositoryId) => {
-      const repository = findRepository(repositoryId);
+      const repository = findActiveRepository(repositoryId);
 
       if (!repository) {
         throw new Error("Repository not found.");
@@ -1330,7 +1348,7 @@ function registerIpcHandlers() {
       throw new Error("Ask a question about this repository.");
     }
 
-    const repository = findRepository(repositoryId);
+    const repository = findActiveRepository(repositoryId);
 
     if (!repository) {
       throw new Error("Repository not found.");
@@ -1421,26 +1439,27 @@ function registerIpcHandlers() {
     return { success: true, ...result };
   });
 
+  // The graph, reading-path, impact and ownership channels take a repository
+  // id too, so they are scoped to the active profile like the handlers above.
+  // An id from another profile resolves to nothing, the same as an unknown id.
+  const scopedRepositoryId = (repositoryId) =>
+    findActiveRepository(repositoryId)?.id ?? null;
+
   ipcMain.handle("get-graph", async (_, { repoId }) => {
-    return getRepositoryGraph(repoId);
+    return getRepositoryGraph(scopedRepositoryId(repoId));
   });
 
   ipcMain.handle("get-start-here", async (_, { repoId }) => {
-    return getStartHere(repoId);
+    return getStartHere(scopedRepositoryId(repoId));
   });
 
   ipcMain.handle("get-impact", async (_, { repoId, path: filePath }) => {
-    return getImpact(repoId, filePath);
+    return getImpact(scopedRepositoryId(repoId), filePath);
   });
 
   ipcMain.handle("get-ownership", async (_, { repoId, path: filePath }) => {
-    return getOwnership(repoId, filePath);
-  });
-
-  ipcMain.handle("get-repos", async () => {
-    return listRepositories();
-  });
-}
+    return getOwnership(scopedRepositoryId(repoId), filePath);
+  });}
 
 // Keeps the native titlebar symbols legible against the renderer's theme. The
 // renderer applies the `.dark` class itself; nativeTheme makes native surfaces

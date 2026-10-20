@@ -48,8 +48,6 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ipcRenderer.invoke("repositories:inspect", repositoryId),
     remove: (repositoryId) =>
       ipcRenderer.invoke("repositories:remove", repositoryId),
-    move: (repositoryId, profileId) =>
-      ipcRenderer.invoke("repositories:move", { repositoryId, profileId }),
     sync: (repositoryId) =>
       ipcRenderer.invoke("repositories:sync", repositoryId),
     discardChanges: (repositoryId) =>

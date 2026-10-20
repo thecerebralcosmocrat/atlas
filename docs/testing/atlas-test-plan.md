@@ -41,7 +41,7 @@ deliberately small. Add a row only when a new risk appears or a defect escapes.
 |---|---|---|---|---|
 | J1 | First run: add repository, clone, index, persist across relaunch | User sees nothing, or loses their repository on restart | `test/repositories-add.integration.test.js:13`; backfill `:218` | Partial — no relaunch assertion |
 | J2 | Ask a grounded question without an API key | Core product promise fails offline; answers fabricate | `:259`, `:365`; retrieval/embedder tests | Partial — no renderer, no timeout path |
-| J3 | Profile A cannot read or mutate profile B's repository | Cross-profile data exposure / destructive bug | Switching, restart, secret-leak tests in `test/profiles.integration.test.js` | **Gap — test written** (`test/profile-isolation.integration.test.js`); expected to fail until handlers are scoped |
+| J3 | Profile A cannot read or mutate profile B's repository | Cross-profile data exposure / destructive bug | Switching, restart, secret-leak tests in `test/profiles.integration.test.js` | **Fix implemented** (`findActiveRepository` in `electron/main.js`); `test/profile-isolation.integration.test.js` must pass before J3 is closed |
 | J4 | Refresh pulls a remote commit and re-indexes; dirty clones are protected | Stale or corrupted code intelligence | `test/repositories-sync.integration.test.js` (7 cases) | Strong; add failure-state cases |
 | J5 | Destructive actions affect only intended records | User's checkout deleted; profile data lost | `repositories-add.integration.test.js:292–385`; profile deletion tests | Strong; no renderer confirmation flow |
 | J6 | Broken happy paths fail understandably and leave prior state intact | Half-written clone, stuck UI, silent data loss | Invalid URL, duplicate add, malformed legacy | Partial — clone failure, AI timeout, corrupt settings |
@@ -150,11 +150,11 @@ the fix.
 | `repositories:remove` | Rejects; A's row and clone still exist. |
 | `repositories:sync` | Rejects; A's git ref and index are unchanged. |
 | `repositories:discard-changes` | Rejects; A's local edits survive. |
-| `repositories:move` | Rejects when the source repository is not in the active profile. **Decide first:** today this is a deliberate move-between-profiles feature (and profile deletion also relocates repositories). Either scope it to the active profile or document it as an intentional exception and drop this row. |
+| `repositories:move` | **Decided: profiles are isolated.** The channel does not exist; a repository stays in the profile it was added to. To have the same repository in two profiles, add it in both (each gets its own clone and index) and delete it from either. |
 | `get-graph`, `get-start-here`, `get-impact`, `get-ownership` | Reject or return nothing for A's ID. |
-| `get-repos` | Returns only the active profile's repositories. Today it calls `listRepositories()` with no profile filter (`electron/main.js:1440`), so it likely lists every profile's repositories. |
+| `get-repos` | **Removed.** It listed every profile's repositories and the renderer never used it. |
 | Settings | B's settings contain B's values; A's API key never appears. |
-| Profile deletion | Deleting B moves only B's repositories to the default; A's clone is untouched. |
+| Profile deletion | Deleting B deletes B's repositories and their clones; nothing is moved to another profile; A's repository and clone are untouched. |
 
 Then repeat the destructive subset from A against B's ID. Neither direction may
 read or mutate the other's data.
@@ -176,25 +176,26 @@ belongs in `electron/main.js` behind one helper that checks
 `repository.workspaceId === getActiveProfileId()` and is used by every
 ID-scoped handler.
 
-**Test status:** `test/profile-isolation.integration.test.js` is written and
-runs under `npm test`. It is expected to fail today; each failing test points
-at a handler that still needs the scoped lookup. Run it before changing any
-handler code.
+**Test status:** `test/profile-isolation.integration.test.js` runs under
+`npm test`. It failed 8 of 10 before the fix (every ID-scoped handler accepted
+the other profile's repository). The fix scopes those handlers through
+`findActiveRepository`, removes `get-repos` and `repositories:move`, and makes
+profile deletion delete its repositories. Close J3 only after a green run.
 
 | Test | Contract row it covers |
 |---|---|
-| `repositories:list` and `get-repos` show only the active profile's repositories | `repositories:list`, `get-repos`, stale sidebar after switching |
+| `repositories:list` shows only the active profile's repositories | `repositories:list`, stale sidebar after switching |
 | Profile B cannot inspect or ask about A's repository | `repositories:inspect`, `repositories:ask` |
 | Profile B cannot read A's graph, start-here, impact, or ownership data | `get-graph`, `get-start-here`, `get-impact`, `get-ownership` |
 | Profile B cannot remove A's repository | `repositories:remove` (row and clone survive) |
 | Profile B cannot sync A's repository | `repositories:sync` (clone HEAD unchanged after a remote push) |
 | Profile B cannot discard A's local edits | `repositories:discard-changes` (uncommitted edit survives) |
-| Profile B cannot move A's repository into itself | `repositories:move` (delete this test if move-from-any-profile is kept) |
+| No channel moves a repository between profiles or lists all of them | `repositories:move` and `get-repos` do not exist |
 | Profile A cannot read or change B's repository | Reverse direction: inspect, graph, sync, discard, remove |
 | Profile A's API key never appears under B | Settings, including events sent to the renderer |
-| Deleting B leaves A's repository and clone untouched | Profile deletion |
+| Deleting B deletes only B's repositories and clones | Profile deletion |
 
-Read-only channels (`get-graph` and friends, `get-repos`) pass if they reject
+Read-only channels (`get-graph` and friends) pass if they reject
 or return nothing, but fail if the result mentions the other profile's file or
 symbol. Mutating channels must reject with `Repository not found.` and leave
 the owner's row, clone, git HEAD, and local edits unchanged.
@@ -246,8 +247,8 @@ the owner's row, clone, git HEAD, and local edits unchanged.
 |---|---|
 | Managed remove | Row, files, symbols, imports, chunks, and clone folder are gone; the renderer is notified. |
 | Unmanaged remove | Row is gone; the user's checkout still exists with its contents. |
-| Active profile delete | The default profile becomes active; theme, sync policy, AI config, and sidebar switch together; the deleted profile's settings row is gone. |
-| Inactive profile delete | The active profile is untouched; only the target's repositories move to the default. |
+| Active profile delete | The default profile becomes active; theme, sync policy, AI config, and sidebar switch together; the deleted profile's settings row and repositories are gone. |
+| Inactive profile delete | The active profile is untouched; the target's repositories, indexes, and managed clones are deleted. Nothing is moved to another profile; an unmanaged checkout is left on disk. |
 | Default profile delete | Rejected with a readable error; nothing changes. |
 | Delete during backfill | A repository deleted while an index is in flight does not reappear. |
 
@@ -257,6 +258,7 @@ the owner's row, clone, git HEAD, and local edits unchanged.
   unmanaged checkouts).
 - Deleting an active profile while settings or the sidebar still point at it.
 - A deleted profile's encrypted key being inherited by another profile.
+- A deleted profile's repositories appearing under another profile.
 
 **Existing coverage:** strong. Missing: renderer confirmation flow and the
 default-profile deletion assertion if not already covered.
@@ -311,7 +313,7 @@ Reviewed for feasibility: the plan is implementable with the existing harness
 
 | Phase | Work | Effort | Risk |
 |---|---|---|---|
-| 1 | Write the J3 test, watch it fail, add one scoped lookup helper, fix every ID-scoped handler (about 10) and `get-repos`; run the full suite | ~1 day | Low |
+| 1 | Write the J3 test, watch it fail, add one scoped lookup helper, fix every ID-scoped handler (about 10); remove `get-repos` and `repositories:move`; make profile deletion delete its repositories; run the full suite | ~1 day | Low |
 | 2 | Fill the J1, J2, J4, J6 integration gaps (relaunch, clone failure, chat timeout, failed apply, corrupt settings) | 2–3 days | Low |
 | 3a | Add the test-only `ATLAS_USER_DATA` override (it does not exist yet) and a Playwright `_electron.launch` smoke test | under 1 day | Medium: confirm Playwright works with Electron 41 and the Electron-ABI `better-sqlite3` before writing specs |
 | 3b | Five E2E specs; add `aria-label`/`htmlFor` where selectors need them (only about 20 exist in `src` today) | 3–4 days | Medium |
@@ -325,8 +327,7 @@ profiles, so expect some to need updating.
 - Runs with `npm test` through Electron's Node for the `better-sqlite3` ABI.
 - Use `loadMain` and `makeGitFixtureRepo`; each file gets temp user-data.
 - Every meaningful step asserts an outcome; no fixed sleeps (`waitFor` only).
-- New file (written, expected to fail until J3 is fixed):
-  `test/profile-isolation.integration.test.js`.
+- New file: `test/profile-isolation.integration.test.js` (J3; must be green).
 - Extend: add/relaunch, clone failure, chat timeout, sync failed-apply, corrupt
   settings.
 
@@ -389,11 +390,12 @@ Permanently ignored failures weaken the value of a green dashboard.
    environment variable explicitly.
 5. **No CI exists yet** (`.github/` is absent). Until it does, this plan is a
    local gate, not a release gate.
-6. **`get-repos` is unscoped** (`electron/main.js:1440`). It likely exposes all
-   profiles' repositories and is a second leak path beside the ID-scoped
-   handlers.
-7. **`repositories:move` semantics are undecided.** It is both a feature and a
-   possible J3 bypass; settle the intended behavior before writing the test.
+6. **Profile deletion is destructive.** Deleting a profile deletes its
+   repositories, indexes, and managed clones. The Settings confirmation says
+   so; the renderer confirmation flow is not yet covered by a test.
+7. **Same repository in two profiles** is two independent clones and indexes.
+   The in-flight add guard is keyed by URL only, so adding one URL in two
+   profiles at the same moment wrongly rejects the second.
 8. **Playwright + Electron 41 is unproven here.** Run a launch smoke test
    before investing in the five specs. Playwright is not yet a dependency.
 9. **Chat timeout is not injectable** (`CHAT_TIMEOUT_MS = 60 * 1000`), which

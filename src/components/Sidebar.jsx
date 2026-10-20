@@ -3,7 +3,6 @@ import {
   Check,
   ChevronsUpDown,
   Ellipsis,
-  FolderInput,
   GitBranch,
   Layers,
   Settings,
@@ -26,9 +25,6 @@ import {
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
-  DropdownMenuSub,
-  DropdownMenuSubContent,
-  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Separator } from "@/components/ui/separator";
@@ -46,19 +42,13 @@ function getRepositoryDescription(repository) {
 
 function RepositoryRow({
   repository,
-  profiles = [],
   active,
   onSelect,
-  onMoveRepository,
   onRequestDeleteRepository,
 }) {
   const [isConfirmOpen, setIsConfirmOpen] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState(null);
-  // The profile a repository is already in is not a move target.
-  const moveTargets = profiles.filter(
-    (profile) => profile.id !== repository.workspaceId,
-  );
 
   const handleConfirmDelete = async (event) => {
     // The action is a dialog close button by default; hold it open until the
@@ -123,32 +113,6 @@ function RepositoryRow({
           </button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="min-w-44">
-          {moveTargets.length > 0 && (
-            <>
-              <DropdownMenuSub>
-                <DropdownMenuSubTrigger>
-                  <FolderInput />
-                  Move to profile
-                </DropdownMenuSubTrigger>
-                <DropdownMenuSubContent>
-                  {moveTargets.map((profile) => (
-                    <DropdownMenuItem
-                      key={profile.id}
-                      onSelect={() =>
-                        onMoveRepository(repository.id, profile.id).catch(
-                          (error) =>
-                            console.error("Failed to move repository:", error),
-                        )
-                      }
-                    >
-                      {profile.name}
-                    </DropdownMenuItem>
-                  ))}
-                </DropdownMenuSubContent>
-              </DropdownMenuSub>
-              <DropdownMenuSeparator />
-            </>
-          )}
           <DropdownMenuItem
             variant="destructive"
             onSelect={() =>
@@ -211,7 +175,6 @@ export default function Sidebar({
   selectedRepositoryId,
   onSelectRepository,
   onSwitchProfile,
-  onMoveRepository,
   onRequestDeleteRepository,
 }) {
   const navigate = useNavigate();
@@ -264,13 +227,11 @@ export default function Sidebar({
             <RepositoryRow
               key={repository.id}
               repository={repository}
-              profiles={profiles}
               active={isActiveRepository(repository)}
               onSelect={() => {
                 onSelectRepository(repository.id);
                 navigate("/repo?tab=overview");
               }}
-              onMoveRepository={onMoveRepository}
               onRequestDeleteRepository={onRequestDeleteRepository}
             />
           ))}

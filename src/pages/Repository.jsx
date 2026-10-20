@@ -42,7 +42,7 @@ export default function Repository({
   selectedRepository,
   selectedDetails,
   isInspecting,
-  onAskRepository,
+  chats,
   onSyncRepository,
   onDiscardRepositoryChanges,
 }) {
@@ -221,7 +221,9 @@ export default function Repository({
           {tab === "ask" && (
             <RepositoryChat
               repository={repository}
-              onAskRepository={onAskRepository}
+              chat={chats.get(repository.id)}
+              onDraftChange={chats.setDraft}
+              onAsk={chats.ask}
             />
           )}
           {tab === "files" && (

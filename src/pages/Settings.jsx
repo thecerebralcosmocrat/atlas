@@ -133,8 +133,8 @@ function profileCountLabel(count) {
 
 // Profiles scope the sidebar. They are managed here rather than in the
 // switcher so creating one is a deliberate action and a rename has room for a
-// description. Deleting moves repositories to the default profile; it never
-// touches the index, which is why the confirmation says so.
+// description. Profiles are isolated from each other, so deleting one deletes
+// its repositories and their indexes, which is why the confirmation says so.
 function ProfileSection({
   profiles = [],
   onCreateProfile,
@@ -210,14 +210,14 @@ function ProfileSection({
 
     try {
       const result = await onDeleteProfile(confirmProfile.id);
-      const moved = result?.movedRepositoryCount ?? 0;
+      const removed = result?.removedRepositoryCount ?? 0;
 
       setConfirmProfile(null);
       setStatus({
         ok: true,
         message:
-          moved > 0
-            ? `Profile deleted. ${profileCountLabel(moved)} moved to the default profile.`
+          removed > 0
+            ? `Profile deleted. ${profileCountLabel(removed)} deleted with it.`
             : "Profile deleted.",
       });
     } catch (error) {
@@ -360,7 +360,7 @@ function ProfileSection({
               {confirmProfile
                 ? `${profileCountLabel(
                     confirmProfile.repositoryCount,
-                  )} will move to the default profile. The repositories stay indexed and nothing is removed from disk, but this profile's theme, sync, and AI settings, including its API key, will be deleted.`
+                  )} in this profile will be permanently deleted, along with everything indexed from them. Repositories cloned into Atlas are deleted from disk. This profile's theme, sync, and AI settings, including its API key, are deleted too. This cannot be undone.`
                 : ""}
             </AlertDialogDescription>
           </AlertDialogHeader>

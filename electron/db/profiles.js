@@ -1,5 +1,5 @@
 const { getDb } = require("./schema");
-const { resolveRepositoryRowId } = require("./repositories");
+const { listRepositories, deleteRepository } = require("./repositories");
 
 const MAX_PROFILE_NAME_LENGTH = 60;
 const MAX_PROFILE_DESCRIPTION_LENGTH = 200;
@@ -159,9 +159,13 @@ function updateProfile(profileId, patch = {}) {
   return findProfile(id);
 }
 
-// Deleting a profile never deletes repositories: they move to the default
-// profile so every indexed repository stays reachable. The default profile
-// itself cannot be deleted, because it is the fallback the move relies on.
+// Profiles are separate: nothing indexed under one profile is ever handed to
+// another. Deleting a profile therefore deletes its repositories, with every
+// row derived from them, instead of moving them anywhere. The default profile
+// cannot be deleted because it is the fallback for a deleted selection.
+//
+// Returns the repositories that were removed so the caller can delete their
+// clones from disk; the database layer never touches the filesystem.
 function deleteProfile(profileId) {
   const id = toProfileId(profileId);
   const existing = id === null ? null : findProfile(id);
@@ -175,64 +179,42 @@ function deleteProfile(profileId) {
   }
 
   const db = getDb();
-  const defaultProfile = db
-    .prepare("SELECT id FROM workspaces WHERE is_default = 1 ORDER BY id LIMIT 1")
-    .get();
-
-  // initializeDatabase guarantees a default profile exists, so this is a
-  // corrupted-database guard rather than a case the UI can trigger.
-  if (!defaultProfile) {
-    throw new Error("The default profile is missing.");
-  }
-
-  const moveRepositories = db.prepare(
-    "UPDATE repos SET workspace_id = ? WHERE workspace_id = ?",
-  );
   const deleteRow = db.prepare("DELETE FROM workspaces WHERE id = ?");
   // The profile's settings row holds its encrypted API key. It is removed with
   // the profile rather than archived, so a deleted profile leaves no secret
-  // behind and the key is never inherited by the default profile.
+  // behind and the key is never inherited by another profile.
   const deleteSettings = db.prepare(
     "DELETE FROM profile_settings WHERE profile_id = ?",
   );
 
   const runDelete = db.transaction(() => {
-    const movedRepositoryCount = moveRepositories.run(
-      defaultProfile.id,
-      id,
-    ).changes;
+    const removedRepositories = listRepositories(id);
+
+    for (const repository of removedRepositories) {
+      deleteRepository(repository.id);
+    }
 
     deleteSettings.run(id);
     deleteRow.run(id);
 
-    return movedRepositoryCount;
+    return removedRepositories;
   });
 
-  return { id, movedRepositoryCount: runDelete() };
-}
+  const removedRepositories = runDelete();
 
-function moveRepositoryToProfile(repositoryId, profileId) {
-  const rowId = resolveRepositoryRowId(repositoryId);
-
-  if (rowId === null) {
-    throw new Error("Repository not found.");
-  }
-
-  const profile = findProfile(profileId);
-
-  if (!profile) {
-    throw new Error("Profile not found.");
-  }
-
-  getDb()
-    .prepare("UPDATE repos SET workspace_id = ? WHERE id = ?")
-    .run(profile.id, rowId);
-
-  return { id: repositoryId, profileId: profile.id };
+  return {
+    id,
+    removedRepositoryCount: removedRepositories.length,
+    removedRepositories: removedRepositories.map((repository) => ({
+      id: repository.id,
+      name: repository.name,
+      localPath: repository.localPath,
+    })),
+  };
 }
 
 // The default profile is the fallback for everything: deleted selections, stale
-// ids in settings.json, and the home of repositories from deleted profiles.
+// ids in settings.json.
 function getDefaultProfileId() {
   const row = getDb()
     .prepare("SELECT id FROM workspaces WHERE is_default = 1 ORDER BY id LIMIT 1")
@@ -262,5 +244,4 @@ module.exports = {
   createProfile,
   updateProfile,
   deleteProfile,
-  moveRepositoryToProfile,
 };
