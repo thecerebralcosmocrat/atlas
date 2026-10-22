@@ -157,21 +157,21 @@ atlas-data/
 
 ```
 electron/
-  main.js            # app lifecycle, IPC handlers, answers, sync poller
-  preload.js         # contextBridge API for the renderer
-  settings.js        # global settings, validation, key encryption
-  db/                # schema and repository queries
-  indexer/           # file traversal, symbol extraction, import resolution
-  pipeline/          # chunking and embeddings
-  query/             # search, graph, impact, ownership, start-here
-  llm/               # NVIDIA NIM chat client
-  storage/           # cloning and local repository state
-  sync/              # remote checks and re-indexing
+├── main.js            # app lifecycle, IPC handlers, answers, sync poller
+├── preload.js         # contextBridge API for the renderer
+├── settings.js        # global settings, validation, key encryption
+├── db/                # schema and repository queries
+├── indexer/           # file traversal, symbol extraction, import resolution
+├── pipeline/          # chunking and embeddings
+├── query/             # search, graph, impact, ownership, start-here
+├── llm/               # NVIDIA NIM chat client
+├── storage/           # cloning and local repository state
+└── sync/              # remote checks and re-indexing
 src/
-  App.jsx            # app shell, routing, settings and repository state
-  components/        # sidebar, file tree, chat, graph, impact, ownership
-  pages/             # Onboarding, Repository, Settings
-test/                # unit and integration tests
+├── App.jsx            # app shell, routing, settings and repository state
+├── components/        # sidebar, file tree, chat, graph, impact, ownership
+└── pages/             # Onboarding, Repository, Settings
+test/                  # unit and integration tests
 ```
 
 ## Testing
