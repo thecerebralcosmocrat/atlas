@@ -9,6 +9,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const { getDb } = require("../db/schema");
+const { SOURCE_FILES_ONLY } = require("../db/languages");
 const { toPosix } = require("../indexer/ImportResolver");
 const { findRepoPrimaryKey, getRepositoryGraph } = require("./graph");
 
@@ -335,7 +336,7 @@ function getStartHere(repositoryId) {
     .prepare(
       `SELECT id, path, instr(raw_content, '__main__') > 0 AS hasMainGuard
          FROM files
-        WHERE repo_id = ?`,
+        WHERE repo_id = ? AND ${SOURCE_FILES_ONLY}`,
     )
     .all(repoId);
   const repo = db

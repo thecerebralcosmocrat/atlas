@@ -8,6 +8,7 @@
 // getRepositoryGraph and detectEntryPoints rather than rebuilding the index.
 
 const { getDb } = require("../db/schema");
+const { SOURCE_FILES_ONLY } = require("../db/languages");
 const { toPosix } = require("../indexer/ImportResolver");
 const { findRepoPrimaryKey, getRepositoryGraph } = require("./graph");
 const {
@@ -508,7 +509,7 @@ function loadFileRows(repoId) {
     .prepare(
       `SELECT id, path, instr(raw_content, '__main__') > 0 AS hasMainGuard
          FROM files
-        WHERE repo_id = ?
+        WHERE repo_id = ? AND ${SOURCE_FILES_ONLY}
         ORDER BY path`,
     )
     .all(repoId);
@@ -594,7 +595,9 @@ function answerRepositoryGraphQuestion(repositoryId, question) {
   const contents =
     target.kind === "symbol"
       ? getDb()
-          .prepare("SELECT path, raw_content FROM files WHERE repo_id = ?")
+          .prepare(
+            `SELECT path, raw_content FROM files WHERE repo_id = ? AND ${SOURCE_FILES_ONLY}`,
+          )
           .all(repoId)
       : [];
 

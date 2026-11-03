@@ -50,7 +50,7 @@ test("indexes in-scope source files into repos and files", async () => {
   const repo = makeFixtureRepo({
     "src/index.js": "const a = 1;\n",
     "src/util.ts": "export const b = 2;\n",
-    "README.md": "# not indexed\n",
+    "notes.txt": "# not indexed\n",
   });
 
   const result = await new IndexerService().indexRepo(repo, fakeWindow());

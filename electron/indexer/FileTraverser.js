@@ -62,6 +62,14 @@ const ALLOWED_EXTENSIONS = new Set([
   // CMake build scripts. CMakeLists.txt has no extension, so it is matched by
   // basename in _isAllowedFile.
   ".cmake",
+  // Docs and config. Indexed so a repository made of Markdown (a skills or
+  // notes repo) is answerable; the structural views skip them
+  // (see db/languages.js).
+  ".md",
+  ".mdx",
+  ".yml",
+  ".yaml",
+  ".toml",
 ]);
 
 const ALLOWED_BASENAMES = new Set(["CMakeLists.txt"]);
