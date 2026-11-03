@@ -211,17 +211,19 @@ export default function App() {
     return repository;
   };
 
-  const handleAskRepository = async (repositoryId, question, onText) => {
+  const handleAskRepository = async (repositoryId, question, onText, requestId) => {
     if (!repositoryApi) {
       throw new Error("Repository Q&A is only available in the Electron app.");
     }
 
-    return repositoryApi.ask(repositoryId, question, onText);
+    return repositoryApi.ask(repositoryId, question, onText, requestId);
   };
+
+  const handleStopAsk = (requestId) => repositoryApi?.cancelAsk?.(requestId);
 
   // Held here, above the router, so a conversation survives switching tabs,
   // pages, and repositories. Dropped when the profile changes.
-  const chats = useRepositoryChats(handleAskRepository);
+  const chats = useRepositoryChats(handleAskRepository, handleStopAsk);
   const { reset: resetChats, remove: removeChat } = chats;
 
   useEffect(() => {

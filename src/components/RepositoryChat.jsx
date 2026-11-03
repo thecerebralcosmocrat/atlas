@@ -63,7 +63,7 @@ function Suggestions({ disabled, onSelect }) {
 
 // The composer sits inside the provider so a send can snap the thread to the
 // latest message, even when the person had scrolled up to read.
-function Composer({ composer, repository, chat, onDraftChange, onAsk }) {
+function Composer({ composer, repository, chat, onDraftChange, onAsk, onStop }) {
   const { snap } = useConversation();
   const { isAsking, streamingReply, draft } = chat;
   const status = !isAsking ? "ready" : streamingReply ? "streaming" : "submitted";
@@ -90,6 +90,7 @@ function Composer({ composer, repository, chat, onDraftChange, onAsk }) {
           snap();
         }}
         status={status}
+        onStop={() => onStop(repository.id)}
         label="Ask a question"
         placeholder="Ask anything about this codebase"
       />
@@ -102,6 +103,7 @@ export default function RepositoryChat({
   chat,
   onDraftChange,
   onAsk,
+  onStop,
 }) {
   // The conversation is owned by the app (see useRepositoryChats) so it
   // survives this tab being unmounted; this component only renders it.
@@ -156,6 +158,7 @@ export default function RepositoryChat({
           chat={chat}
           onDraftChange={onDraftChange}
           onAsk={onAsk}
+          onStop={onStop}
         />
       </section>
     </ConversationProvider>

@@ -242,6 +242,7 @@ export default function Repository({
               chat={chats.get(repository.id)}
               onDraftChange={chats.setDraft}
               onAsk={chats.ask}
+              onStop={chats.stop}
             />
           )}
           {tab === "files" && (
