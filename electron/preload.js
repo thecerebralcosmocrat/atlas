@@ -52,8 +52,30 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ipcRenderer.invoke("repositories:sync", repositoryId),
     discardChanges: (repositoryId) =>
       ipcRenderer.invoke("repositories:discard-changes", repositoryId),
-    ask: (repositoryId, question) =>
-      ipcRenderer.invoke("repositories:ask", { repositoryId, question }),
+    // `onText` receives the answer so far while the model is still writing it.
+    // The resolved value is always the full final answer.
+    ask: async (repositoryId, question, onText) => {
+      if (typeof onText !== "function") {
+        return ipcRenderer.invoke("repositories:ask", { repositoryId, question });
+      }
+
+      const requestId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      const subscription = (event, value) => {
+        if (value?.requestId === requestId) onText(value.text);
+      };
+
+      ipcRenderer.on("repositories:ask-text", subscription);
+
+      try {
+        return await ipcRenderer.invoke("repositories:ask", {
+          repositoryId,
+          question,
+          requestId,
+        });
+      } finally {
+        ipcRenderer.removeListener("repositories:ask-text", subscription);
+      }
+    },
     onIndexProgress: (callback) => {
       const subscription = (event, value) => callback(value);
       ipcRenderer.on("index-progress", subscription);

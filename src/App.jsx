@@ -210,12 +210,12 @@ export default function App() {
     return repository;
   };
 
-  const handleAskRepository = async (repositoryId, question) => {
+  const handleAskRepository = async (repositoryId, question, onText) => {
     if (!repositoryApi) {
       throw new Error("Repository Q&A is only available in the Electron app.");
     }
 
-    return repositoryApi.ask(repositoryId, question);
+    return repositoryApi.ask(repositoryId, question, onText);
   };
 
   // Held here, above the router, so a conversation survives switching tabs,

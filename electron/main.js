@@ -800,7 +800,38 @@ function buildRepositoryContext({
   ].join("\n") + excerptSection;
 }
 
-async function answerWithNim(repositoryContext, question) {
+// Reads an OpenAI-style server-sent event stream and yields each data payload.
+async function* readEventStream(body) {
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  for await (const chunk of body) {
+    buffer += decoder.decode(chunk, { stream: true });
+
+    let newline;
+    while ((newline = buffer.indexOf("\n")) !== -1) {
+      const line = buffer.slice(0, newline).trim();
+      buffer = buffer.slice(newline + 1);
+
+      if (!line.startsWith("data:")) continue;
+
+      const data = line.slice(5).trim();
+      if (data === "[DONE]") return;
+
+      try {
+        yield JSON.parse(data);
+      } catch {
+        // A malformed event is skipped rather than ending the answer.
+      }
+    }
+  }
+}
+
+// Streams the answer, passing the text so far to `onText` as tokens arrive.
+// The timeout resets on every event, so a long answer that keeps arriving is
+// not cut off, but a stalled one is. If the stream breaks after some text
+// arrived, that text is kept with a note instead of being thrown away.
+async function answerWithNim(repositoryContext, question, onText = () => {}) {
   const {
     apiKey,
     chatApiUrl: apiUrl,
@@ -812,7 +843,12 @@ async function answerWithNim(repositoryContext, question) {
   }
 
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), CHAT_TIMEOUT_MS);
+  let timeout = setTimeout(() => controller.abort(), CHAT_TIMEOUT_MS);
+  const resetTimeout = () => {
+    clearTimeout(timeout);
+    timeout = setTimeout(() => controller.abort(), CHAT_TIMEOUT_MS);
+  };
+  let text = "";
 
   try {
     const response = await fetch(apiUrl, {
@@ -821,11 +857,13 @@ async function answerWithNim(repositoryContext, question) {
       headers: {
         Authorization: `Bearer ${apiKey}`,
         "Content-Type": "application/json",
+        Accept: "text/event-stream",
       },
       body: JSON.stringify({
         model,
         temperature: 0.2,
         max_tokens: 900,
+        stream: true,
         messages: [
           {
             role: "system",
@@ -847,8 +885,25 @@ async function answerWithNim(repositoryContext, question) {
       );
     }
 
-    const payload = await response.json();
-    return payload.choices?.[0]?.message?.content?.trim() || null;
+    for await (const event of readEventStream(response.body)) {
+      resetTimeout();
+      const delta = event.choices?.[0]?.delta?.content;
+
+      if (delta) {
+        text += delta;
+        onText(text);
+      }
+    }
+
+    return text.trim() || null;
+  } catch (error) {
+    if (!text.trim()) throw error;
+
+    console.error("The answer stream broke partway:", error);
+    const reason =
+      error?.name === "AbortError" ? "the model stopped responding" : "the connection dropped";
+
+    return `${text.trim()}\n\n_The answer was cut off because ${reason}._`;
   } finally {
     clearTimeout(timeout);
   }
@@ -1350,7 +1405,7 @@ function registerIpcHandlers() {
     },
   );
 
-  ipcMain.handle("repositories:ask", async (_, { repositoryId, question }) => {
+  ipcMain.handle("repositories:ask", async (event, { repositoryId, question, requestId }) => {
     if (!question || typeof question !== "string") {
       throw new Error("Ask a question about this repository.");
     }
@@ -1422,9 +1477,18 @@ function registerIpcHandlers() {
     }
 
     try {
+      // The renderer passes a requestId when it wants the answer streamed.
+      const sendText = requestId
+        ? (text) => {
+            if (!event?.sender?.isDestroyed?.()) {
+              event?.sender?.send?.("repositories:ask-text", { requestId, text });
+            }
+          }
+        : undefined;
       const nimAnswer = await answerWithNim(
         buildRepositoryContext(answerContext),
         trimmedQuestion,
+        sendText,
       );
 
       if (nimAnswer) return nimAnswer;

@@ -48,7 +48,7 @@ export default function RepositoryChat({
 }) {
   // The conversation is owned by the app (see useRepositoryChats) so it
   // survives this tab being unmounted; this component only renders it.
-  const { messages, isAsking, draft: question } = chat;
+  const { messages, isAsking, streamingReply, draft: question } = chat;
   const messagesRef = useRef(null);
 
   // Runs on mount too, so returning to the tab lands on the latest message.
@@ -56,7 +56,7 @@ export default function RepositoryChat({
     if (messagesRef.current) {
       messagesRef.current.scrollTop = messagesRef.current.scrollHeight;
     }
-  }, [messages, isAsking]);
+  }, [messages, isAsking, streamingReply]);
 
   const askQuestion = (nextQuestion = question) => {
     onAsk(repository.id, nextQuestion);
@@ -78,7 +78,9 @@ export default function RepositoryChat({
         {messages.map((message, index) => (
           <Message key={`${message.role}-${index}`} {...message} />
         ))}
-        {isAsking && <Message role="assistant" content="Thinking…" />}
+        {isAsking && (
+          <Message role="assistant" content={streamingReply || "Thinking…"} />
+        )}
       </div>
 
       {messages.length <= 1 && (

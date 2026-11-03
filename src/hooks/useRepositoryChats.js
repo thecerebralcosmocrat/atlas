@@ -17,6 +17,7 @@ export const GREETING = {
 const EMPTY_CHAT = Object.freeze({
   messages: [GREETING],
   isAsking: false,
+  streamingReply: "",
   draft: "",
 });
 
@@ -66,13 +67,20 @@ export function useRepositoryChats(askRepository) {
       update(repositoryId, (previous) => ({
         messages: [...previous.messages, { role: "user", content: trimmedQuestion }],
         isAsking: true,
+        streamingReply: "",
         draft: "",
       }));
 
       let reply;
+      // Shows the answer as it streams in. Dropped after a profile switch or
+      // once the conversation is gone, like the final answer below.
+      const onText = (text) => {
+        if (generation !== generationRef.current) return;
+        update(repositoryId, () => ({ streamingReply: text }), { create: false });
+      };
 
       try {
-        reply = await askRef.current(repositoryId, trimmedQuestion);
+        reply = await askRef.current(repositoryId, trimmedQuestion, onText);
       } catch (error) {
         reply =
           error?.message || "I could not answer that yet. Try another question.";
@@ -89,6 +97,7 @@ export function useRepositoryChats(askRepository) {
         (previous) => ({
           messages: [...previous.messages, { role: "assistant", content: reply }],
           isAsking: false,
+          streamingReply: "",
         }),
         { create: false },
       );
