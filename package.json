@@ -18,18 +18,21 @@
   "devDependencies": {
     "@electron/rebuild": "^4.0.4",
     "@tailwindcss/vite": "^4.2.4",
+    "@typescript-eslint/parser": "^8.72.1",
     "@vitejs/plugin-react": "^6.0.1",
     "concurrently": "^9.2.1",
     "cross-env": "^10.1.0",
     "electron": "^41.3.0",
     "electron-builder": "^26.8.1",
-    "tailwindcss": "^4.2.4",
+    "eslint": "^9.39.5",
+    "tailwindcss": "^4.3.4",
     "vite": "^8.0.10",
     "wait-on": "^9.0.5"
   },
   "dependencies": {
     "@fontsource-variable/geist": "^5.2.8",
     "@lancedb/lancedb": "^0.27.2",
+    "@tailwindcss/postcss": "^4.3.4",
     "better-sqlite3": "^12.9.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
