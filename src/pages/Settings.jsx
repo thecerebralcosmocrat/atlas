@@ -1,32 +1,53 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { Icon, Add, Edit, External, TrashCan } from "@/components/glaze/icon";
+import { Button } from "@/components/glaze/ui/button";
 import {
-  FolderOpen,
-  Monitor,
-  Moon,
-  Pencil,
-  Plus,
-  RefreshCw,
-  Sun,
-  Trash2,
-} from "lucide-react";
+  DataList,
+  DataListItem,
+  DataListLabel,
+  DataListValue,
+} from "@/components/glaze/ui/data-list";
 import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { cn } from "@/lib/utils";
+  Dialog,
+  DialogAction,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/glaze/ui/dialog";
+import {
+  Field,
+  FieldContent,
+  FieldDescription,
+  FieldLabel,
+  FieldLegend,
+  FieldSet,
+  FormStatus,
+} from "@/components/glaze/ui/field";
+import { Input } from "@/components/glaze/ui/input";
+import {
+  Item,
+  ItemActions,
+  ItemContent,
+  ItemDescription,
+  ItemGroup,
+  ItemTitle,
+} from "@/components/glaze/ui/item";
+import { NumberInput } from "@/components/glaze/ui/number-input";
+import {
+  SegmentedControl,
+  SegmentedControlItem,
+} from "@/components/glaze/ui/segmented-control";
+import { Status } from "@/components/glaze/ui/status";
+import { Switch } from "@/components/glaze/ui/switch";
+import { Alert, AlertTitle } from "@/components/glaze/ui/alert";
 
 const THEME_OPTIONS = [
-  { value: "light", label: "Light", icon: Sun },
-  { value: "dark", label: "Dark", icon: Moon },
-  { value: "system", label: "System", icon: Monitor },
+  { value: "light", label: "Light" },
+  { value: "dark", label: "Dark" },
+  { value: "system", label: "System" },
 ];
 
 const MIN_SYNC_MINUTES = 1;
@@ -72,58 +93,16 @@ function formatBytes(bytes) {
 
 function Section({ title, description, action, children }) {
   return (
-    <section className="border border-border">
-      <div className="flex items-start justify-between gap-3 border-b border-border px-4 py-3">
-        <div>
-          <h2 className="text-sm font-semibold text-foreground">{title}</h2>
-          <p className="mt-1 max-w-xl text-xs leading-relaxed text-muted-foreground">
-            {description}
-          </p>
+    <section className="flex flex-col gap-4 border-t border-line-faint py-6 first:border-t-0 first:pt-0">
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex min-w-0 flex-col gap-1">
+          <h2 className="type-heading-sm text-text-1">{title}</h2>
+          <p className="type-body-sm max-w-measure text-text-2">{description}</p>
         </div>
         {action}
       </div>
-      <div className="divide-y divide-border">{children}</div>
+      <div className="flex flex-col gap-5">{children}</div>
     </section>
-  );
-}
-
-function Row({ label, htmlFor, hint, children }) {
-  return (
-    <div className="grid gap-3 px-4 py-4 sm:grid-cols-[180px_minmax(0,1fr)] sm:items-start">
-      <div className="min-w-0">
-        {htmlFor ? (
-          <label
-            htmlFor={htmlFor}
-            className="block text-sm font-medium text-foreground"
-          >
-            {label}
-          </label>
-        ) : (
-          <span className="block text-sm font-medium text-foreground">
-            {label}
-          </span>
-        )}
-        {hint && (
-          <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-            {hint}
-          </p>
-        )}
-      </div>
-      <div className="min-w-0">{children}</div>
-    </div>
-  );
-}
-
-function Description({ children, tone = "muted" }) {
-  return (
-    <p
-      className={cn(
-        "text-xs leading-relaxed",
-        tone === "error" ? "text-destructive" : "text-muted-foreground",
-      )}
-    >
-      {children}
-    </p>
   );
 }
 
@@ -146,7 +125,10 @@ function ProfileSection({
   const [editingId, setEditingId] = useState(null);
   const [draftName, setDraftName] = useState("");
   const [draftDescription, setDraftDescription] = useState("");
+  // The profile stays set while the dialog fades out so its name does not
+  // vanish mid-exit; only confirmOpen drives visibility.
   const [confirmProfile, setConfirmProfile] = useState(null);
+  const [confirmOpen, setConfirmOpen] = useState(false);
   const [isBusy, setIsBusy] = useState(false);
   const [status, setStatus] = useState(null);
 
@@ -198,11 +180,9 @@ function ProfileSection({
     }
   };
 
-  const handleDelete = async (event) => {
-    // The action is a dialog close button by default; hold it open until the
-    // main process confirms so a failure stays visible.
-    event.preventDefault();
-
+  // The dialog stays open and pending until this settles, and shows the
+  // message of a rejection, so a failure stays visible.
+  const handleDelete = async () => {
     if (!confirmProfile) return;
 
     setIsBusy(true);
@@ -212,7 +192,6 @@ function ProfileSection({
       const result = await onDeleteProfile(confirmProfile.id);
       const removed = result?.removedRepositoryCount ?? 0;
 
-      setConfirmProfile(null);
       setStatus({
         ok: true,
         message:
@@ -221,10 +200,10 @@ function ProfileSection({
             : "Profile deleted.",
       });
     } catch (error) {
-      setStatus({
-        ok: false,
-        message: error.message || "Could not delete the profile.",
-      });
+      const message = error.message || "Could not delete the profile.";
+
+      setStatus({ ok: false, message });
+      throw new Error(message);
     } finally {
       setIsBusy(false);
     }
@@ -232,150 +211,161 @@ function ProfileSection({
 
   return (
     <>
-      {profiles.map((profile) => (
-        <Row
-          key={profile.id}
-          label={profile.name}
-          hint={`${profileCountLabel(profile.repositoryCount)}${
-            profile.description ? ` · ${profile.description}` : ""
-          }${profile.isDefault ? " · Default profile" : ""}`}
-        >
-          {editingId === profile.id ? (
-            <div className="flex flex-col gap-2">
-              <Input
-                aria-label={`Name for ${profile.name}`}
-                value={draftName}
-                onChange={(event) => setDraftName(event.target.value)}
-                disabled={isBusy}
-              />
-              <Input
-                aria-label={`Description for ${profile.name}`}
-                value={draftDescription}
-                placeholder="Description (optional)"
-                onChange={(event) => setDraftDescription(event.target.value)}
-                disabled={isBusy}
-              />
-              <div className="flex flex-wrap gap-2">
-                <Button
-                  type="button"
-                  size="sm"
-                  onClick={() => handleSave(profile.id)}
-                  disabled={isBusy}
-                >
-                  {isBusy ? "Saving…" : "Save"}
-                </Button>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  onClick={() => setEditingId(null)}
-                  disabled={isBusy}
-                >
-                  Cancel
-                </Button>
+      <ItemGroup variant="plain" aria-label="Profiles" className="-mx-3 w-auto">
+        {profiles.map((profile) =>
+          editingId === profile.id ? (
+            <Item key={profile.id} className="py-3">
+              <div className="flex min-w-0 flex-1 flex-col gap-3">
+                <Field>
+                  <FieldLabel>Name</FieldLabel>
+                  <Input
+                    aria-label={`Name for ${profile.name}`}
+                    value={draftName}
+                    onChange={(event) => setDraftName(event.target.value)}
+                    disabled={isBusy}
+                  />
+                </Field>
+                <Field>
+                  <FieldLabel optional>Description</FieldLabel>
+                  <Input
+                    aria-label={`Description for ${profile.name}`}
+                    value={draftDescription}
+                    onChange={(event) =>
+                      setDraftDescription(event.target.value)
+                    }
+                    disabled={isBusy}
+                  />
+                </Field>
+                <div className="flex flex-wrap justify-end gap-2">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="secondary"
+                    onClick={() => setEditingId(null)}
+                    disabled={isBusy}
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    pending={isBusy}
+                    pendingLabel="Saving"
+                    onClick={() => handleSave(profile.id)}
+                  >
+                    Save
+                  </Button>
+                </div>
               </div>
-            </div>
+            </Item>
           ) : (
-            <div className="flex flex-wrap gap-2">
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                onClick={() => startEditing(profile)}
-              >
-                <Pencil />
-                Rename
-              </Button>
-              {!profile.isDefault && (
+            <Item key={profile.id}>
+              <ItemContent>
+                <ItemTitle>{profile.name}</ItemTitle>
+                <ItemDescription>
+                  {`${profileCountLabel(profile.repositoryCount)}${
+                    profile.description ? ` · ${profile.description}` : ""
+                  }${profile.isDefault ? " · Default profile" : ""}`}
+                </ItemDescription>
+              </ItemContent>
+              <ItemActions>
                 <Button
                   type="button"
                   size="sm"
-                  variant="outline"
-                  onClick={() => {
-                    setStatus(null);
-                    setConfirmProfile(profile);
-                  }}
+                  variant="ghost"
+                  onClick={() => startEditing(profile)}
                 >
-                  <Trash2 />
-                  Delete
+                  <Icon icon={Edit} />
+                  Rename
                 </Button>
-              )}
-            </div>
-          )}
-        </Row>
-      ))}
+                {!profile.isDefault && (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => {
+                      setStatus(null);
+                      setConfirmProfile(profile);
+                      setConfirmOpen(true);
+                    }}
+                  >
+                    <Icon icon={TrashCan} />
+                    Delete
+                  </Button>
+                )}
+              </ItemActions>
+            </Item>
+          ),
+        )}
+      </ItemGroup>
 
-      <div className="px-4 py-4">
-        <form
-          className="flex flex-col gap-2 sm:flex-row sm:items-center"
-          onSubmit={handleCreate}
-        >
-          <Input
-            aria-label="New profile name"
-            placeholder="New profile name"
-            value={newName}
-            onChange={(event) => setNewName(event.target.value)}
-            disabled={isBusy}
-          />
-          <Input
-            aria-label="New profile description"
-            placeholder="Description (optional)"
-            value={newDescription}
-            onChange={(event) => setNewDescription(event.target.value)}
-            disabled={isBusy}
-          />
+      <form className="flex flex-col gap-3" onSubmit={handleCreate}>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start">
+          <Field>
+            <FieldLabel>New profile name</FieldLabel>
+            <Input
+              placeholder="Work"
+              value={newName}
+              onChange={(event) => setNewName(event.target.value)}
+              disabled={isBusy}
+              autoComplete="off"
+            />
+          </Field>
+          <Field>
+            <FieldLabel optional>Description</FieldLabel>
+            <Input
+              aria-label="New profile description"
+              placeholder="Client repositories"
+              value={newDescription}
+              onChange={(event) => setNewDescription(event.target.value)}
+              disabled={isBusy}
+              autoComplete="off"
+            />
+          </Field>
+        </div>
+        <div className="flex items-center justify-between gap-3">
+          <FormStatus status={status ? (status.ok ? "ok" : "fail") : undefined}>
+            {status?.message}
+          </FormStatus>
           <Button
             type="submit"
             size="sm"
-            className="flex-shrink-0"
             disabled={isBusy || !newName.trim()}
           >
-            <Plus />
+            <Icon icon={Add} />
             Create
           </Button>
-        </form>
-
-        <div className="mt-2 min-h-4" aria-live="polite">
-          {status && (
-            <Description tone={status.ok ? "muted" : "error"}>
-              {status.message}
-            </Description>
-          )}
         </div>
-      </div>
+      </form>
 
-      <AlertDialog
-        open={Boolean(confirmProfile)}
-        onOpenChange={(open) => {
-          if (isBusy) return;
-          if (!open) setConfirmProfile(null);
-        }}
+      <Dialog
+        role="alertdialog"
+        open={confirmOpen}
+        onOpenChange={setConfirmOpen}
       >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>
-              Delete {confirmProfile?.name}?
-            </AlertDialogTitle>
-            <AlertDialogDescription>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete {confirmProfile?.name}?</DialogTitle>
+            <DialogDescription>
               {confirmProfile
                 ? `${profileCountLabel(
                     confirmProfile.repositoryCount,
                   )} in this profile will be permanently deleted, along with everything indexed from them. Repositories cloned into Atlas are deleted from disk. This profile's theme, sync, and AI settings, including its API key, are deleted too. This cannot be undone.`
                 : ""}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={isBusy}>Cancel</AlertDialogCancel>
-            <AlertDialogAction
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <DialogClose>Cancel</DialogClose>
+            <DialogAction
               variant="destructive"
-              onClick={handleDelete}
-              disabled={isBusy}
+              onAction={handleDelete}
+              pendingLabel="Deleting"
             >
-              {isBusy ? "Deleting…" : "Delete profile"}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+              Delete profile
+            </DialogAction>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }
@@ -401,10 +391,14 @@ export default function Settings({
   const [isTesting, setIsTesting] = useState(false);
   const [connectionResult, setConnectionResult] = useState(null);
   const [generalStatus, setGeneralStatus] = useState(null);
-  const [intervalDraft, setIntervalDraft] = useState("");
+  const [intervalDraft, setIntervalDraft] = useState(null);
   const [storage, setStorage] = useState(null);
   const [storageError, setStorageError] = useState("");
   const [isLoadingStorage, setIsLoadingStorage] = useState(false);
+  const [isSavingSync, setIsSavingSync] = useState(false);
+  // Base UI clamps a typed number to min/max before it commits, which would hide
+  // the out-of-range message, so the last typed value is kept here.
+  const typedIntervalRef = useRef(null);
 
   useEffect(() => {
     if (!settings) return;
@@ -415,7 +409,7 @@ export default function Settings({
       embedModel: settings.ai.embedModel,
       embedApiUrl: settings.ai.embedApiUrl,
     });
-    setIntervalDraft(String(settings.general.syncIntervalMinutes));
+    setIntervalDraft(settings.general.syncIntervalMinutes);
   }, [settings]);
 
   const loadStorage = async () => {
@@ -443,7 +437,7 @@ export default function Settings({
   if (!settingsApi) {
     return (
       <div className="flex flex-1 items-center justify-center p-6">
-        <p className="max-w-md text-center text-sm text-muted-foreground">
+        <p className="max-w-md text-center type-body text-text-2">
           Settings are only available in the Atlas desktop app.
         </p>
       </div>
@@ -453,7 +447,7 @@ export default function Settings({
   if (!settings) {
     return (
       <div className="flex flex-1 items-center justify-center p-6">
-        <p className="text-sm text-muted-foreground">Loading settings…</p>
+        <p className="type-body text-text-2">Loading settings…</p>
       </div>
     );
   }
@@ -474,11 +468,16 @@ export default function Settings({
     }
   };
 
-  const commitSyncInterval = async () => {
-    const value = Number(intervalDraft);
+  const commitSyncInterval = async (committed) => {
+    const typed = typedIntervalRef.current;
+    const value = typed === null ? committed : typed;
     const current = settings.general.syncIntervalMinutes;
 
+    typedIntervalRef.current = null;
+
     if (
+      value === null ||
+      value === undefined ||
       !Number.isInteger(value) ||
       value < MIN_SYNC_MINUTES ||
       value > MAX_SYNC_MINUTES
@@ -487,18 +486,34 @@ export default function Settings({
         ok: false,
         message: `Use a whole number of minutes between ${MIN_SYNC_MINUTES} and ${MAX_SYNC_MINUTES}.`,
       });
-      setIntervalDraft(String(current));
+      setIntervalDraft(current);
       return;
     }
 
-    if (value === current) return;
+    if (value === current) {
+      setIntervalDraft(current);
+      return;
+    }
 
     const saved = await updateGeneral(
       { syncIntervalMinutes: value },
       "Sync schedule updated.",
     );
 
-    if (!saved) setIntervalDraft(String(current));
+    if (!saved) setIntervalDraft(current);
+  };
+
+  const toggleAutoSync = async (next) => {
+    setIsSavingSync(true);
+
+    try {
+      await updateGeneral(
+        { autoSync: next },
+        next ? "Automatic sync turned on." : "Automatic sync turned off.",
+      );
+    } finally {
+      setIsSavingSync(false);
+    }
   };
 
   // The draft key is only sent when the user typed one; an empty input means
@@ -589,332 +604,294 @@ export default function Settings({
 
   return (
     <div className="min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden">
-      <header className="px-4 pb-4 pt-4">
-        <p className="text-xs font-medium uppercase tracking-widest text-muted-foreground">
-          Application
-        </p>
-        <h1 className="mt-1 text-2xl font-semibold tracking-[-0.055em] text-foreground">
-          Settings
-        </h1>
-        <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
-          {`Appearance, sync and AI settings belong to the ${settings.profile?.name ?? "active"} profile. Switch profiles from the sidebar to use different settings and API keys.`}
-        </p>
-      </header>
+      <div className="flex max-w-3xl flex-col gap-8 px-6 py-8">
+        <header className="flex flex-col gap-1">
+          <h1 className="type-title text-text-1">Settings</h1>
+          <p className="type-body max-w-measure text-text-2">
+            {`Appearance, sync and AI settings belong to the ${settings.profile?.name ?? "active"} profile. Switch profiles from the sidebar to use different settings and API keys.`}
+          </p>
+        </header>
 
-      <div className="grid max-w-[860px] gap-4 px-4 pb-8">
-        <Section
-          title="Appearance"
-          description="Saved for the active profile. The app follows your choice immediately, including the window controls."
-        >
-          <Row label="Theme" hint="System matches your operating system.">
-            <div role="group" aria-label="Theme" className="flex flex-wrap gap-2">
-              {THEME_OPTIONS.map(({ value, label, icon: Icon }) => {
-                const active = settings.general.theme === value;
-
-                return (
-                  <Button
-                    key={value}
-                    type="button"
-                    variant={active ? "default" : "outline"}
-                    size="sm"
-                    aria-pressed={active}
-                    onClick={() => updateGeneral({ theme: value }, "Theme updated.")}
-                  >
-                    <Icon />
-                    {label}
-                  </Button>
-                );
-              })}
-            </div>
-          </Row>
-        </Section>
-
-        <Section
-          title="Sync"
-          description="Atlas checks this profile's cloned repositories for new commits. Only a repository that actually moved is fetched and re-indexed."
-        >
-          <Row
-            label="Automatic sync"
-            hint="Runs in the background while the app is open."
+        <div className="flex flex-col">
+          <Section
+            title="Appearance"
+            description="Saved for the active profile. The app follows your choice immediately, including the window controls."
           >
-            <div className="flex flex-wrap items-center gap-3">
-              <button
-                type="button"
-                role="switch"
-                aria-checked={settings.general.autoSync}
-                aria-label="Automatic sync"
-                onClick={() =>
-                  updateGeneral(
-                    { autoSync: !settings.general.autoSync },
-                    settings.general.autoSync
-                      ? "Automatic sync turned off."
-                      : "Automatic sync turned on.",
-                  )
+            <FieldSet>
+              <FieldLegend variant="label">Theme</FieldLegend>
+              <SegmentedControl
+                aria-label="Theme"
+                value={settings.general.theme}
+                onValueChange={(value) =>
+                  updateGeneral({ theme: value }, "Theme updated.")
                 }
-                className={cn(
-                  "relative inline-flex h-6 w-11 shrink-0 items-center border border-border transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring",
-                  settings.general.autoSync ? "bg-primary" : "bg-secondary",
-                )}
               >
-                <span
-                  className={cn(
-                    "block size-4 border border-border bg-background shadow-sm transition-transform duration-150 ease-out",
-                    settings.general.autoSync
-                      ? "translate-x-[22px]"
-                      : "translate-x-[3px]",
-                  )}
-                />
-              </button>
-              <span className="text-sm text-muted-foreground">
-                {settings.general.autoSync
-                  ? "Checking remotes in the background."
-                  : "Background checks are off."}
-              </span>
-            </div>
-          </Row>
+                {THEME_OPTIONS.map(({ value, label }) => (
+                  <SegmentedControlItem key={value} value={value}>
+                    {label}
+                  </SegmentedControlItem>
+                ))}
+              </SegmentedControl>
+              <FieldDescription>
+                System matches your operating system.
+              </FieldDescription>
+            </FieldSet>
+          </Section>
 
-          <Row
-            label="Check interval"
-            htmlFor="sync-interval"
-            hint={`Every ${settings.general.syncIntervalMinutes} minutes while enabled.`}
+          <Section
+            title="Sync"
+            description="Atlas checks this profile's cloned repositories for new commits. Only a repository that actually moved is fetched and re-indexed."
           >
-            <div className="flex flex-wrap items-center gap-2">
-              <Input
-                id="sync-interval"
-                type="number"
+            <Field orientation="horizontal">
+              <FieldContent>
+                <FieldLabel>Automatic sync</FieldLabel>
+                <FieldDescription>
+                  Runs in the background while the app is open.
+                </FieldDescription>
+                <FieldDescription>
+                  {settings.general.autoSync
+                    ? "Checking remotes in the background."
+                    : "Background checks are off."}
+                </FieldDescription>
+              </FieldContent>
+              <Switch
+                checked={settings.general.autoSync}
+                pending={isSavingSync}
+                onCheckedChange={toggleAutoSync}
+              />
+            </Field>
+
+            <Field disabled={!settings.general.autoSync}>
+              <FieldLabel>Check interval</FieldLabel>
+              <NumberInput
+                className="w-48"
+                unit="minutes"
                 min={MIN_SYNC_MINUTES}
                 max={MAX_SYNC_MINUTES}
                 step={1}
                 value={intervalDraft}
                 disabled={!settings.general.autoSync}
-                onChange={(event) => setIntervalDraft(event.target.value)}
-                onBlur={commitSyncInterval}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") {
-                    event.preventDefault();
-                    event.currentTarget.blur();
-                  }
+                onValueChange={(value) => {
+                  typedIntervalRef.current = value;
+                  setIntervalDraft(value);
                 }}
-                className="w-24"
+                onValueCommitted={commitSyncInterval}
               />
-              <span className="text-sm text-muted-foreground">minutes</span>
-            </div>
-          </Row>
+              <FieldDescription>
+                {`Every ${settings.general.syncIntervalMinutes} minutes while enabled.`}
+              </FieldDescription>
+            </Field>
 
-          {generalStatus && (
-            <div
-              role="status"
-              className="px-4 py-2 text-xs"
-              aria-live="polite"
+            <FormStatus
+              className="empty:-mb-5 empty:min-h-0"
+              status={generalStatus ? (generalStatus.ok ? "ok" : "fail") : undefined}
             >
-              <Description tone={generalStatus.ok ? "muted" : "error"}>
-                {generalStatus.message}
-              </Description>
-            </div>
-          )}
-        </Section>
+              {generalStatus?.message}
+            </FormStatus>
+          </Section>
 
-        <Section
-          title="Profiles"
-          description="Each profile has its own repositories, theme, sync policy, and AI provider settings including its API key. Deleting a profile moves its repositories to the default profile and removes its settings and key."
-        >
-          <ProfileSection
-            profiles={profiles}
-            onCreateProfile={onCreateProfile}
-            onUpdateProfile={onUpdateProfile}
-            onDeleteProfile={onDeleteProfile}
-          />
-        </Section>
-
-        <Section
-          title="AI provider"
-          description="NVIDIA NIM powers generated answers and semantic retrieval. These values and the API key belong to the active profile only. Without a key, Atlas still answers from the local keyword index."
-        >
-          <Row
-            label="API key"
-            htmlFor="ai-api-key"
-            hint={keyDescription}
+          <Section
+            title="Profiles"
+            description="Each profile has its own repositories, theme, sync policy, and AI provider settings including its API key. Deleting a profile moves its repositories to the default profile and removes its settings and key."
           >
-            <div className="flex flex-wrap items-center gap-2">
-              <Input
-                id="ai-api-key"
-                type="password"
-                value={apiKeyDraft}
-                onChange={(event) => setApiKeyDraft(event.target.value)}
-                placeholder={
-                  settings.ai.hasApiKey
-                    ? "Enter a new key to replace the current one"
-                    : "Paste your NVIDIA NIM API key"
-                }
-                autoComplete="off"
-                spellCheck={false}
-                className="min-w-48 flex-1"
-              />
-              {settings.ai.apiKeySource === "settings" && (
-                <Button
-                  type="button"
-                  variant="destructive"
-                  size="sm"
-                  onClick={handleRemoveKey}
-                  disabled={isSavingAi || isTesting}
-                >
-                  <Trash2 />
-                  Remove
-                </Button>
-              )}
-            </div>
-          </Row>
+            <ProfileSection
+              profiles={profiles}
+              onCreateProfile={onCreateProfile}
+              onUpdateProfile={onUpdateProfile}
+              onDeleteProfile={onDeleteProfile}
+            />
+          </Section>
 
-          {AI_FIELDS.map((field) => (
-            <Row
-              key={field.name}
-              label={field.label}
-              htmlFor={`ai-${field.name}`}
-              hint={`${field.hint} Leave blank to use ${
-                settings.ai.effective[field.name]
-              }.`}
-            >
-              <Input
-                id={`ai-${field.name}`}
-                value={aiForm[field.name]}
-                onChange={(event) =>
-                  setAiForm((current) => ({
-                    ...current,
-                    [field.name]: event.target.value,
-                  }))
-                }
-                placeholder={settings.ai.effective[field.name]}
-                spellCheck={false}
-                className="font-mono text-xs"
-              />
-            </Row>
-          ))}
+          <Section
+            title="AI provider"
+            description="NVIDIA NIM powers generated answers and semantic retrieval. These values and the API key belong to the active profile only. Without a key, Atlas still answers from the local keyword index."
+          >
+            <Field>
+              <FieldLabel>API key</FieldLabel>
+              <div className="flex flex-wrap items-center gap-2">
+                <Input
+                  mode="password"
+                  mono
+                  value={apiKeyDraft}
+                  onChange={(event) => setApiKeyDraft(event.target.value)}
+                  placeholder={
+                    settings.ai.hasApiKey
+                      ? "Enter a new key to replace the current one"
+                      : "Paste your NVIDIA NIM API key"
+                  }
+                  autoComplete="off"
+                  spellCheck={false}
+                  className="min-w-48 flex-1"
+                />
+                {settings.ai.apiKeySource === "settings" && (
+                  <Button
+                    type="button"
+                    variant="destructive"
+                    size="sm"
+                    onClick={handleRemoveKey}
+                    disabled={isSavingAi || isTesting}
+                  >
+                    <Icon icon={TrashCan} />
+                    Remove
+                  </Button>
+                )}
+              </div>
+              <FieldDescription>{keyDescription}</FieldDescription>
+            </Field>
 
-          <div className="px-4 py-4">
-            <div className="flex flex-wrap items-center gap-2">
+            {AI_FIELDS.map((field) => (
+              <Field key={field.name}>
+                <FieldLabel>{field.label}</FieldLabel>
+                <Input
+                  mono
+                  value={aiForm[field.name]}
+                  onChange={(event) =>
+                    setAiForm((current) => ({
+                      ...current,
+                      [field.name]: event.target.value,
+                    }))
+                  }
+                  placeholder={settings.ai.effective[field.name]}
+                  spellCheck={false}
+                  autoComplete="off"
+                />
+                <FieldDescription>
+                  {`${field.hint} Leave blank to use ${
+                    settings.ai.effective[field.name]
+                  }.`}
+                </FieldDescription>
+              </Field>
+            ))}
+
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={handleTestConnection}
+                pending={isTesting}
+                pendingLabel="Testing"
+                disabled={isSavingAi}
+              >
+                Save and test connection
+              </Button>
               <Button
                 type="button"
                 onClick={handleSaveAi}
-                disabled={isSavingAi || isTesting}
+                pending={isSavingAi}
+                pendingLabel="Saving"
+                disabled={isTesting}
               >
-                {isSavingAi ? "Saving…" : "Save changes"}
-              </Button>
-              <Button
-                type="button"
-                variant="outline"
-                onClick={handleTestConnection}
-                disabled={isSavingAi || isTesting}
-              >
-                <RefreshCw
-                  className={cn("size-3.5", isTesting && "animate-spin")}
-                />
-                {isTesting ? "Testing…" : "Save & test connection"}
+                Save changes
               </Button>
             </div>
 
-            <div className="mt-3 min-h-4" aria-live="polite">
-              {aiStatus && (
-                <Description tone={aiStatus.ok ? "muted" : "error"}>
-                  {aiStatus.message}
-                </Description>
-              )}
+            <div className="flex flex-col gap-3" aria-live="polite">
+              <FormStatus
+                className="empty:-mb-3 empty:min-h-0"
+                status={aiStatus ? (aiStatus.ok ? "ok" : "fail") : undefined}
+              >
+                {aiStatus?.message}
+              </FormStatus>
 
-              {connectionResult && (
-                <div className="mt-2 space-y-1 border border-border p-3">
-                  {connectionResult.error ? (
-                    <Description tone="error">
-                      {connectionResult.error}
-                    </Description>
-                  ) : (
-                    <>
-                      <Description
-                        tone={connectionResult.chat?.ok ? "muted" : "error"}
-                      >
-                        Chat:{" "}
+              {connectionResult &&
+                (connectionResult.error ? (
+                  <Alert status="fail">
+                    <AlertTitle>{connectionResult.error}</AlertTitle>
+                  </Alert>
+                ) : (
+                  <DataList>
+                    <DataListItem>
+                      <DataListLabel>Chat</DataListLabel>
+                      <DataListValue>
+                        <Status status={connectionResult.chat?.ok ? "ok" : "fail"} />{" "}
                         {connectionResult.chat?.ok
                           ? connectionResult.chat.message
                           : connectionResult.chat?.error}
-                      </Description>
-                      <Description
-                        tone={
-                          connectionResult.embeddings?.ok ? "muted" : "error"
-                        }
-                      >
-                        Embeddings:{" "}
+                      </DataListValue>
+                    </DataListItem>
+                    <DataListItem>
+                      <DataListLabel>Embeddings</DataListLabel>
+                      <DataListValue>
+                        <Status
+                          status={connectionResult.embeddings?.ok ? "ok" : "fail"}
+                        />{" "}
                         {connectionResult.embeddings?.ok
                           ? connectionResult.embeddings.message
                           : connectionResult.embeddings?.error}
-                      </Description>
-                    </>
-                  )}
-                </div>
-              )}
+                      </DataListValue>
+                    </DataListItem>
+                  </DataList>
+                ))}
             </div>
-          </div>
-        </Section>
+          </Section>
 
-        <Section
-          title="Storage"
-          description="Where Atlas keeps its database and cloned repositories."
-          action={
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={loadStorage}
-              disabled={isLoadingStorage}
-            >
-              <RefreshCw
-                className={cn("size-3.5", isLoadingStorage && "animate-spin")}
-              />
-              {isLoadingStorage ? "Reading…" : "Refresh"}
-            </Button>
-          }
-        >
-          {storageError && (
-            <div className="px-4 py-3">
-              <Description tone="error">{storageError}</Description>
-            </div>
-          )}
-
-          <Row label="Data folder">
-            <div className="flex flex-wrap items-center gap-2">
-              <code className="min-w-0 flex-1 truncate border border-border bg-muted px-2 py-1.5 font-mono text-xs text-foreground">
-                {storage?.dataPath ?? "Loading…"}
-              </code>
+          <Section
+            title="Storage"
+            description="Where Atlas keeps its database and cloned repositories."
+            action={
               <Button
                 type="button"
-                variant="outline"
+                variant="secondary"
                 size="sm"
-                onClick={handleOpenStorage}
-                disabled={!storage}
+                onClick={loadStorage}
+                pending={isLoadingStorage}
+                pendingLabel="Reading"
               >
-                <FolderOpen />
-                Open folder
+                Refresh
               </Button>
-            </div>
-          </Row>
+            }
+          >
+            {storageError && <FormStatus status="fail">{storageError}</FormStatus>}
 
-          <Row label="Database">
-            <p className="text-sm tabular-nums text-foreground">
-              {storage ? formatBytes(storage.databaseBytes) : "…"}
-            </p>
-          </Row>
-
-          <Row label="Cloned repositories">
-            <p className="text-sm tabular-nums text-foreground">
-              {storage
-                ? `${formatBytes(storage.repositoriesBytes)} · ${
-                    storage.repositoryCount
-                  } ${
-                    storage.repositoryCount === 1
-                      ? "repository"
-                      : "repositories"
-                  }`
-                : "…"}
-            </p>
-          </Row>
-        </Section>
+            <DataList>
+              <DataListItem>
+                <DataListLabel>Data folder</DataListLabel>
+                <DataListValue>
+                  <div className="flex w-full items-center gap-2">
+                    <Input
+                      mode="copy"
+                      size="sm"
+                      aria-label="Data folder path"
+                      noun="data folder path"
+                      value={storage?.dataPath ?? "Loading…"}
+                      className="min-w-0 flex-1"
+                    />
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      onClick={handleOpenStorage}
+                      disabled={!storage}
+                    >
+                      <Icon icon={External} />
+                      Open folder
+                    </Button>
+                  </div>
+                </DataListValue>
+              </DataListItem>
+              <DataListItem>
+                <DataListLabel>Database</DataListLabel>
+                <DataListValue className="tabular-nums">
+                  {storage ? formatBytes(storage.databaseBytes) : "…"}
+                </DataListValue>
+              </DataListItem>
+              <DataListItem>
+                <DataListLabel>Cloned repositories</DataListLabel>
+                <DataListValue className="tabular-nums">
+                  {storage
+                    ? `${formatBytes(storage.repositoriesBytes)} · ${
+                        storage.repositoryCount
+                      } ${
+                        storage.repositoryCount === 1
+                          ? "repository"
+                          : "repositories"
+                      }`
+                    : "…"}
+                </DataListValue>
+              </DataListItem>
+            </DataList>
+          </Section>
+        </div>
       </div>
     </div>
   );
