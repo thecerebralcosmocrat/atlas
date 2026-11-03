@@ -50,7 +50,7 @@ function Suggestions({ disabled, onSelect }) {
 
   return (
     <FollowUps
-      layout="rows"
+      layout="chips"
       suggestions={suggestions}
       disabled={disabled}
       onSelect={(prompt) => {
@@ -70,7 +70,7 @@ function Composer({ composer, repository, chat, onDraftChange, onAsk, onStop }) 
 
   return (
     <div
-      className="shrink-0 pt-3"
+      className="shrink-0"
       // One question at a time: Enter does nothing while an answer is coming.
       onKeyDownCapture={(event) => {
         if (isAsking && event.key === "Enter") {
@@ -83,6 +83,7 @@ function Composer({ composer, repository, chat, onDraftChange, onAsk, onStop }) 
         // A fresh composer per repository, seeded with that repository's draft.
         key={repository.id}
         ref={composer}
+        layout="inline"
         defaultValue={draft}
         onValueChange={(value) => onDraftChange(repository.id, value.text)}
         onSubmit={(value) => {
@@ -92,8 +93,11 @@ function Composer({ composer, repository, chat, onDraftChange, onAsk, onStop }) 
         status={status}
         onStop={() => onStop(repository.id)}
         label="Ask a question"
-        placeholder="Ask anything about this codebase"
+        placeholder={`Ask about ${repository.name}`}
       />
+      <p className="mt-2 text-center type-caption text-text-3">
+        Answers are grounded in the indexed source.
+      </p>
     </div>
   );
 }
@@ -110,47 +114,54 @@ export default function RepositoryChat({
   const { messages, isAsking, streamingReply } = chat;
   const status = isAsking ? "streaming" : "idle";
   const composer = useRef(null);
+  // Only the seeded greeting so far: show a welcome with the composer in the
+  // middle of the page instead of an empty thread above a docked input.
+  const isEmpty = messages.length <= 1 && !isAsking;
+
+  const askSuggestion = (prompt) => {
+    // The question goes out as written; the unsent draft is dropped.
+    composer.current?.clear();
+    onAsk(repository.id, prompt);
+  };
 
   return (
     <ConversationProvider status={status}>
-      <section className="flex h-full min-h-0 min-w-0 flex-col">
-        <div className="shrink-0 pb-3">
-          <h2 className="type-heading-sm text-text-1">Ask</h2>
-          <p className="mt-1 type-body-sm text-text-2">
-            Answers are grounded in the indexed source.
-          </p>
-        </div>
-
-        <Conversation status={status} className="min-h-0 flex-1">
-          <ConversationViewport aria-label={`Ask ${repository.name}`}>
-            <ConversationContent>
-              {messages.map((message, index) => (
-                <Turn key={`${message.role}-${index}`} {...message} />
-              ))}
-              {isAsking && streamingReply && (
-                <AgentTurn name="Atlas" state="live">
-                  <Response streaming>{streamingReply}</Response>
-                </AgentTurn>
-              )}
-              {isAsking && !streamingReply && (
-                <AgentTurn name="Atlas" state="live">
-                  <Activity waiting announce={false} />
-                </AgentTurn>
-              )}
-              {messages.length <= 1 && (
-                <Suggestions
-                  disabled={isAsking}
-                  onSelect={(prompt) => {
-                    // The question goes out as written; the unsent draft is dropped.
-                    composer.current?.clear();
-                    onAsk(repository.id, prompt);
-                  }}
-                />
-              )}
-            </ConversationContent>
-          </ConversationViewport>
-          <ConversationJump />
-        </Conversation>
+      <section
+        className={`mx-auto flex h-full min-h-0 w-full max-w-measure flex-col ${
+          isEmpty ? "justify-center gap-4" : "gap-3"
+        }`}
+      >
+        {isEmpty ? (
+          <div className="text-center">
+            <h2 className="type-heading text-text-1">
+              Ask about {repository.name}
+            </h2>
+            <p className="mt-1 type-body text-text-2">
+              {messages[0]?.content}
+            </p>
+          </div>
+        ) : (
+          <Conversation status={status} className="min-h-0 flex-1">
+            <ConversationViewport aria-label={`Ask ${repository.name}`}>
+              <ConversationContent>
+                {messages.map((message, index) => (
+                  <Turn key={`${message.role}-${index}`} {...message} />
+                ))}
+                {isAsking && streamingReply && (
+                  <AgentTurn name="Atlas" state="live">
+                    <Response streaming>{streamingReply}</Response>
+                  </AgentTurn>
+                )}
+                {isAsking && !streamingReply && (
+                  <AgentTurn name="Atlas" state="live">
+                    <Activity waiting announce={false} />
+                  </AgentTurn>
+                )}
+              </ConversationContent>
+            </ConversationViewport>
+            <ConversationJump />
+          </Conversation>
+        )}
 
         <Composer
           composer={composer}
@@ -160,6 +171,12 @@ export default function RepositoryChat({
           onAsk={onAsk}
           onStop={onStop}
         />
+
+        {isEmpty && (
+          <div className="flex justify-center">
+            <Suggestions disabled={isAsking} onSelect={askSuggestion} />
+          </div>
+        )}
       </section>
     </ConversationProvider>
   );

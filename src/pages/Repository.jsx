@@ -27,7 +27,7 @@ import { Skeleton } from "@/components/glaze/ui/skeleton";
 import { Truncate } from "@/components/glaze/ui/truncate";
 import { formatDate } from "@/lib/format";
 
-const VALID_TABS = ["overview", "ask", "files", "graph", "analyze"];
+const VALID_TABS = ["ask", "overview", "files", "graph", "analyze"];
 
 function Overview({ repository, selectedDetails }) {
   return (
@@ -70,8 +70,8 @@ export default function Repository({
   const [isDiscarding, setIsDiscarding] = useState(false);
   const [syncError, setSyncError] = useState("");
   const [syncNotice, setSyncNotice] = useState("");
-  const rawTab = searchParams.get("tab") ?? "overview";
-  const tab = VALID_TABS.includes(rawTab) ? rawTab : "overview";
+  const rawTab = searchParams.get("tab") ?? "ask";
+  const tab = VALID_TABS.includes(rawTab) ? rawTab : "ask";
   // Sync feedback belongs to the repository it was produced for; switching
   // repositories must not carry a stale "up to date" notice across.
   const activeRepositoryId = selectedRepository?.id ?? repositories[0]?.id;
@@ -93,7 +93,7 @@ export default function Repository({
             </EmptyDescription>
           </EmptyHeader>
           <EmptyContent>
-            <Button onClick={() => navigate("/")}>Add repository</Button>
+            <Button onClick={() => navigate("/add")}>Add repository</Button>
           </EmptyContent>
         </Empty>
       </div>

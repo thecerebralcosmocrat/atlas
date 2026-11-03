@@ -1,8 +1,8 @@
 import { Tabs, TabsList, TabsTrigger } from "@/components/glaze/ui/tabs";
 
 const tabs = [
-  { id: "overview", label: "Overview" },
   { id: "ask", label: "Ask" },
+  { id: "overview", label: "Overview" },
   { id: "files", label: "Files" },
   { id: "graph", label: "Graph" },
   { id: "analyze", label: "Analyze" },

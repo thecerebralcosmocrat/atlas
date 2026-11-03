@@ -38,7 +38,7 @@ export default function Onboarding({ onAddRepository }) {
         `Indexed ${repository.fileCount} files in ${repository.directoryCount} folders.`,
         "Opening repository...",
       ]);
-      navigate("/repo?tab=overview");
+      navigate("/repo?tab=ask");
     } catch (err) {
       setError(err.message || "Could not add this repository.");
       setLogs((prev) => [

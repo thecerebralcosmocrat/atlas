@@ -75,7 +75,7 @@ function RepositoryRow({
         <ItemContent>
           <ItemTitle>
             <ItemLink
-              href="#/repo?tab=overview"
+              href="#/repo?tab=ask"
               aria-current={active ? "page" : undefined}
               onClick={(event) => {
                 event.preventDefault();
@@ -171,7 +171,7 @@ export default function Sidebar({
 
   const isActiveRepository = (repository) =>
     selectedRepositoryId === repository.id &&
-    location.pathname !== "/" &&
+    location.pathname !== "/add" &&
     location.pathname !== "/settings";
   const isSettingsActive = location.pathname === "/settings";
 
@@ -187,7 +187,7 @@ export default function Sidebar({
           className="w-full"
           onClick={() => {
             onSelectRepository(null);
-            navigate("/");
+            navigate("/add");
           }}
         >
           <Icon icon={Add} />
@@ -214,7 +214,7 @@ export default function Sidebar({
                 active={isActiveRepository(repository)}
                 onSelect={() => {
                   onSelectRepository(repository.id);
-                  navigate("/repo?tab=overview");
+                  navigate("/repo?tab=ask");
                 }}
                 onRequestDeleteRepository={onRequestDeleteRepository}
               />

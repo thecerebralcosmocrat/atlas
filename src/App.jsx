@@ -3,6 +3,7 @@ import {
   HashRouter as Router,
   Routes,
   Route,
+  Navigate,
 } from "react-router-dom";
 import AppShell from "./components/AppShell";
 import Onboarding from "./pages/Onboarding";
@@ -24,6 +25,9 @@ function getProfileApi() {
 
 export default function App() {
   const [repositories, setRepositories] = useState([]);
+  // False until the first list arrives, so the home route does not flash the
+  // add form for a person who already has repositories.
+  const [repositoriesLoaded, setRepositoriesLoaded] = useState(false);
   const [profiles, setProfiles] = useState([]);
   const [selectedRepositoryId, setSelectedRepositoryId] = useState(null);
   const [selectedDetails, setSelectedDetails] = useState(null);
@@ -132,13 +136,17 @@ export default function App() {
 
   useEffect(() => {
     async function loadRepositories() {
-      if (!repositoryApi) return;
+      if (!repositoryApi) {
+        setRepositoriesLoaded(true);
+        return;
+      }
 
       // The main process scopes this to the active profile. Switching
       // profiles therefore re-reads the list and cannot leave a repository
       // from the previous profile selected.
       const storedRepositories = await repositoryApi.list();
       setRepositories(storedRepositories);
+      setRepositoriesLoaded(true);
       setSelectedRepositoryId((currentId) => {
         const stillListed = storedRepositories.some(
           (repository) => repository.id === currentId,
@@ -344,8 +352,19 @@ export default function App() {
         }}
       >
         <Routes>
+          {/* Chat is the home page; with nothing indexed yet, start by adding one. */}
           <Route
             path="/"
+            element={
+              !repositoriesLoaded ? null : repositories.length > 0 ? (
+                <Navigate to="/repo?tab=ask" replace />
+              ) : (
+                <Onboarding onAddRepository={handleAddRepository} />
+              )
+            }
+          />
+          <Route
+            path="/add"
             element={<Onboarding onAddRepository={handleAddRepository} />}
           />
           <Route
