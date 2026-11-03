@@ -42,12 +42,27 @@ function toRelativeSet(files) {
   return new Set(files.map((file) => file.path.split(path.sep).join("/")));
 }
 
-test("collects only in-scope source files", async () => {
+test("collects in-scope source and doc files", async () => {
   const files = await new FileTraverser().traverse(makeFixtureRepo());
 
   assert.deepStrictEqual(
     toRelativeSet(files),
-    new Set(["src/index.js", "src/app.jsx", "script.py"]),
+    new Set(["src/index.js", "src/app.jsx", "script.py", "README.md"]),
+  );
+});
+
+test("collects Markdown, YAML and TOML so a docs-only repository is not empty", async () => {
+  const root = makeTempDir("atlas-traverse-docs-");
+
+  for (const name of ["a.md", "b.mdx", "c.yml", "d.yaml", "e.toml", "skip.txt"]) {
+    writeFixtureFile(root, `docs/${name}`, "content\n");
+  }
+
+  const files = await new FileTraverser().traverse(root);
+
+  assert.deepStrictEqual(
+    toRelativeSet(files),
+    new Set(["docs/a.md", "docs/b.mdx", "docs/c.yml", "docs/d.yaml", "docs/e.toml"]),
   );
 });
 

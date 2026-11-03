@@ -7,6 +7,7 @@ const {
   listRepositories,
   listUnindexedRepositories,
   listRepositoriesWithoutChunks,
+  listEmptyIndexedRepositories,
   listSyncableRepositories,
   findRepository,
   deleteRepository,
@@ -259,6 +260,7 @@ async function backfillRepositoryIndexes(mainWindow) {
   // not mask a repository that still needs vectors in the current one.
   const targets = [
     ...listUnindexedRepositories(),
+    ...listEmptyIndexedRepositories(),
     ...(embedder ? listRepositoriesWithoutChunks(embedder.model) : []),
   ];
 
@@ -1461,23 +1463,18 @@ function registerIpcHandlers() {
       excerpts,
     };
 
-    // Nothing was indexed, so there is no code to ground an answer in. Say so
-    // rather than letting the model guess from the README alone.
-    if (repository.fileCount === 0) {
-      return `${NOT_INDEXED_NOTE}\n\n${answerRepositoryQuestion(
-        answerContext,
-        trimmedQuestion,
-      )}`;
-    }
+    // Nothing was indexed, so there is no code to ground an answer in. The
+    // model still gets the README, package.json and file tree, and is told
+    // that is all it has; the fixed note is only the fallback if it is down.
+    const notIndexed = repository.fileCount === 0;
 
     // Impact, symbol-usage, and unreachability questions have a deterministic
     // answer in the graph, which beats a lexical guess or the model reading
     // excerpts. Anything it cannot resolve falls through to those.
     try {
-      const graphAnswer = answerRepositoryGraphQuestion(
-        repository.id,
-        trimmedQuestion,
-      );
+      const graphAnswer = notIndexed
+        ? null
+        : answerRepositoryGraphQuestion(repository.id, trimmedQuestion);
 
       if (graphAnswer) return graphAnswer;
     } catch (error) {
@@ -1487,10 +1484,12 @@ function registerIpcHandlers() {
     // Ownership and recency come from the clone's git history, which the graph
     // cannot see. Falls through to retrieval when it has nothing to say.
     try {
-      const ownershipAnswer = await answerRepositoryOwnershipQuestion(
-        repository.id,
-        trimmedQuestion,
-      );
+      const ownershipAnswer = notIndexed
+        ? null
+        : await answerRepositoryOwnershipQuestion(
+            repository.id,
+            trimmedQuestion,
+          );
 
       if (ownershipAnswer) return ownershipAnswer;
     } catch (error) {
@@ -1512,7 +1511,9 @@ function registerIpcHandlers() {
       let nimAnswer;
       try {
         nimAnswer = await answerWithNim(
-          buildRepositoryContext(answerContext),
+          notIndexed
+            ? `${buildRepositoryContext(answerContext)}\n\nNote: no source files were indexed for this repository, so only the README, package.json and file tree above are available. Say so if they are not enough to answer.`
+            : buildRepositoryContext(answerContext),
           trimmedQuestion,
           sendText,
           controller.signal,
@@ -1526,7 +1527,9 @@ function registerIpcHandlers() {
       console.error(error);
     }
 
-    return answerRepositoryQuestion(answerContext, trimmedQuestion);
+    const fallback = answerRepositoryQuestion(answerContext, trimmedQuestion);
+
+    return notIndexed ? `${NOT_INDEXED_NOTE}\n\n${fallback}` : fallback;
   });
 
   ipcMain.handle("index-repo", async (event, { repoPath }) => {
