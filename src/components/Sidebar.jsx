@@ -38,7 +38,11 @@ import {
 
 function getRepositoryDescription(repository) {
   try {
-    return new URL(repository.url).hostname;
+    const { hostname, pathname } = new URL(repository.url);
+    // owner/repo tells two clones of the same name apart; the host alone cannot.
+    const path = pathname.replace(/^\/+|\/+$/g, "").replace(/\.git$/i, "");
+
+    return path || hostname;
   } catch {
     return repository.localPath || "Indexed repository";
   }
@@ -255,9 +259,8 @@ export default function Sidebar({
             <Icon icon={ChevronSort} />
           </DropdownMenuTrigger>
           <DropdownMenuContent side="top" align="start" sideOffset={8}>
-            <DropdownMenuLabel>Switch profile</DropdownMenuLabel>
-            <DropdownMenuSeparator />
             <DropdownMenuGroup>
+              <DropdownMenuLabel>Switch profile</DropdownMenuLabel>
               {profiles.length === 0 && (
                 <DropdownMenuItem disabled>Loading profiles…</DropdownMenuItem>
               )}
