@@ -1,7 +1,23 @@
-import { useEffect, useRef } from "react";
-import { ArrowUp } from "lucide-react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
+import { useRef } from "react";
+import { PromptInput } from "@/components/glaze/ai/prompt-input";
+import {
+  Conversation,
+  ConversationProvider,
+  ConversationViewport,
+  ConversationContent,
+  ConversationJump,
+  useConversation,
+} from "@/components/glaze/ai/conversation";
+import {
+  Message,
+  MessageContent,
+  MessageBubble,
+  MessageBubbleContent,
+  AgentTurn,
+} from "@/components/glaze/ai/message";
+import { Response } from "@/components/glaze/ai/response";
+import { Activity } from "@/components/glaze/ai/activity";
+import { FollowUps } from "@/components/glaze/ai/follow-ups";
 
 const suggestions = [
   "What does this repo do?",
@@ -9,33 +25,74 @@ const suggestions = [
   "What should I read first?",
 ];
 
-function Message({ role, content }) {
-  const isUser = role === "user";
+function Turn({ role, content }) {
+  if (role === "user") {
+    return (
+      <Message from="user">
+        <MessageContent>
+          <MessageBubble>
+            <MessageBubbleContent>{content}</MessageBubbleContent>
+          </MessageBubble>
+        </MessageContent>
+      </Message>
+    );
+  }
+
+  return (
+    <AgentTurn name="Atlas" state="done">
+      <Response>{content}</Response>
+    </AgentTurn>
+  );
+}
+
+function Suggestions({ disabled, onSelect }) {
+  const { snap } = useConversation();
+
+  return (
+    <FollowUps
+      layout="rows"
+      suggestions={suggestions}
+      disabled={disabled}
+      onSelect={(prompt) => {
+        onSelect(prompt);
+        snap();
+      }}
+    />
+  );
+}
+
+// The composer sits inside the provider so a send can snap the thread to the
+// latest message, even when the person had scrolled up to read.
+function Composer({ composer, repository, chat, onDraftChange, onAsk }) {
+  const { snap } = useConversation();
+  const { isAsking, streamingReply, draft } = chat;
+  const status = !isAsking ? "ready" : streamingReply ? "streaming" : "submitted";
 
   return (
     <div
-      className={
-        isUser
-          ? "border-s-2 border-primary bg-muted/40 px-4 py-3"
-          : "border-s-2 border-transparent px-4 py-3"
-      }
+      className="shrink-0 pt-3"
+      // One question at a time: Enter does nothing while an answer is coming.
+      onKeyDownCapture={(event) => {
+        if (isAsking && event.key === "Enter") {
+          event.preventDefault();
+          event.stopPropagation();
+        }
+      }}
     >
-      <div
-        className={`text-[11px] font-medium uppercase tracking-widest ${
-          isUser ? "text-foreground" : "text-muted-foreground"
-        }`}
-      >
-        {isUser ? "You" : "Atlas"}
-      </div>
-      {isUser ? (
-        <div className="mt-1 whitespace-pre-wrap text-sm leading-relaxed text-foreground">
-          {content}
-        </div>
-      ) : (
-        <div className="atlas-markdown mt-1 text-sm leading-relaxed text-foreground">
-          <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
-        </div>
-      )}
+      <PromptInput
+        // A fresh composer per repository, seeded with that repository's draft.
+        key={repository.id}
+        ref={composer}
+        defaultValue={draft}
+        onValueChange={(value) => onDraftChange(repository.id, value.text)}
+        onSubmit={(value) => {
+          onAsk(repository.id, value.text);
+          snap();
+        }}
+        status={status}
+        label="Ask a question"
+        placeholder="Ask anything about this codebase"
+      />
     </div>
   );
 }
@@ -48,81 +105,59 @@ export default function RepositoryChat({
 }) {
   // The conversation is owned by the app (see useRepositoryChats) so it
   // survives this tab being unmounted; this component only renders it.
-  const { messages, isAsking, streamingReply, draft: question } = chat;
-  const messagesRef = useRef(null);
-
-  // Runs on mount too, so returning to the tab lands on the latest message.
-  useEffect(() => {
-    if (messagesRef.current) {
-      messagesRef.current.scrollTop = messagesRef.current.scrollHeight;
-    }
-  }, [messages, isAsking, streamingReply]);
-
-  const askQuestion = (nextQuestion = question) => {
-    onAsk(repository.id, nextQuestion);
-  };
+  const { messages, isAsking, streamingReply } = chat;
+  const status = isAsking ? "streaming" : "idle";
+  const composer = useRef(null);
 
   return (
-    <section className="flex h-full min-h-0 min-w-0 flex-col border border-border">
-      <div className="border-b border-border px-4 py-3">
-        <h2 className="text-sm font-medium text-foreground">Ask</h2>
-        <p className="mt-1 text-xs text-muted-foreground">
-          Answers are grounded in the indexed source.
-        </p>
-      </div>
-
-      <div
-        ref={messagesRef}
-        className="flex min-h-0 flex-1 flex-col divide-y divide-border overflow-y-auto"
-      >
-        {messages.map((message, index) => (
-          <Message key={`${message.role}-${index}`} {...message} />
-        ))}
-        {isAsking && (
-          <Message role="assistant" content={streamingReply || "Thinking…"} />
-        )}
-      </div>
-
-      {messages.length <= 1 && (
-        <div className="grid shrink-0 grid-cols-1 divide-y divide-border border-t border-border sm:grid-cols-3 sm:divide-x sm:divide-y-0">
-          {suggestions.map((prompt) => (
-            <button
-              key={prompt}
-              type="button"
-              onClick={() => askQuestion(prompt)}
-              className="px-3 py-2 text-start text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
-            >
-              {prompt}
-            </button>
-          ))}
+    <ConversationProvider status={status}>
+      <section className="flex h-full min-h-0 min-w-0 flex-col">
+        <div className="shrink-0 pb-3">
+          <h2 className="type-heading-sm text-text-1">Ask</h2>
+          <p className="mt-1 type-body-sm text-text-2">
+            Answers are grounded in the indexed source.
+          </p>
         </div>
-      )}
 
-      <div className="flex shrink-0 items-stretch border-t border-border">
-        <label htmlFor="repo-question" className="sr-only">
-          Ask a question
-        </label>
-        <input
-          id="repo-question"
-          value={question}
-          onChange={(event) => onDraftChange(repository.id, event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === "Enter") askQuestion();
-          }}
-          placeholder="Ask anything about this codebase"
-          className="min-w-0 flex-1 bg-transparent px-4 py-3 text-sm text-foreground outline-none placeholder:text-muted-foreground"
-          disabled={isAsking}
+        <Conversation status={status} className="min-h-0 flex-1">
+          <ConversationViewport aria-label={`Ask ${repository.name}`}>
+            <ConversationContent>
+              {messages.map((message, index) => (
+                <Turn key={`${message.role}-${index}`} {...message} />
+              ))}
+              {isAsking && streamingReply && (
+                <AgentTurn name="Atlas" state="live">
+                  <Response streaming>{streamingReply}</Response>
+                </AgentTurn>
+              )}
+              {isAsking && !streamingReply && (
+                <AgentTurn name="Atlas" state="live">
+                  <Activity waiting announce={false} />
+                </AgentTurn>
+              )}
+              {messages.length <= 1 && (
+                <Suggestions
+                  disabled={isAsking}
+                  onSelect={(prompt) => {
+                    // The question goes out as written; the unsent draft is dropped.
+                    composer.current?.clear();
+                    onAsk(repository.id, prompt);
+                  }}
+                />
+              )}
+            </ConversationContent>
+          </ConversationViewport>
+          <ConversationJump />
+        </Conversation>
+
+        <Composer
+          composer={composer}
+          repository={repository}
+          chat={chat}
+          onDraftChange={onDraftChange}
+          onAsk={onAsk}
         />
-        <button
-          type="button"
-          onClick={() => askQuestion()}
-          disabled={isAsking || !question.trim()}
-          aria-label="Send question"
-          className="flex items-center justify-center border-s border-border px-4 text-foreground transition-colors hover:bg-muted disabled:opacity-50 disabled:hover:bg-transparent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
-        >
-          <ArrowUp className="size-4" />
-        </button>
-      </div>
-    </section>
+      </section>
+    </ConversationProvider>
   );
 }

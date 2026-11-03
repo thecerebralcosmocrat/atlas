@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { RefreshCw } from "lucide-react";
 import RepoNav from "@/components/RepoNav";
 import StartHerePanel from "@/components/StartHerePanel";
 import RepositoryChat from "@/components/RepositoryChat";
@@ -8,30 +7,49 @@ import FileTree from "@/components/FileTree";
 import CodeGraphPanel from "@/components/CodeGraphPanel";
 import ImpactPanel from "@/components/ImpactPanel";
 import OwnershipPanel from "@/components/OwnershipPanel";
-import { Button } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
+import { Button } from "@/components/glaze/ui/button";
+import { Icon, Retry } from "@/components/glaze/icon";
+import { Alert, AlertTitle, AlertAction } from "@/components/glaze/ui/alert";
+import {
+  DataList,
+  DataListItem,
+  DataListLabel,
+  DataListValue,
+} from "@/components/glaze/ui/data-list";
+import {
+  Empty,
+  EmptyHeader,
+  EmptyTitle,
+  EmptyDescription,
+  EmptyContent,
+} from "@/components/glaze/ui/empty-state";
+import { Skeleton } from "@/components/glaze/ui/skeleton";
+import { Truncate } from "@/components/glaze/ui/truncate";
 import { formatDate } from "@/lib/format";
 
 const VALID_TABS = ["overview", "ask", "files", "graph", "analyze"];
 
-function Stat({ value, label }) {
-  return (
-    <div className="p-4">
-      <div className="text-2xl font-semibold tabular-nums">{value}</div>
-      <div className="mt-1 text-xs text-muted-foreground">{label}</div>
-    </div>
-  );
-}
-
 function Overview({ repository, selectedDetails }) {
   return (
     <div className="grid gap-4">
-      <div className="grid grid-cols-1 divide-y divide-border border border-border sm:grid-cols-4 sm:divide-x sm:divide-y-0">
-        <Stat value={selectedDetails?.fileCount ?? "-"} label="Files" />
-        <Stat value={selectedDetails?.directoryCount ?? "-"} label="Folders" />
-        <Stat value={formatDate(repository.addedAt)} label="Added" />
-        <Stat value={formatDate(repository.indexedAt)} label="Last updated" />
-      </div>
+      <DataList>
+        <DataListItem>
+          <DataListLabel>Files</DataListLabel>
+          <DataListValue>{selectedDetails?.fileCount ?? "-"}</DataListValue>
+        </DataListItem>
+        <DataListItem>
+          <DataListLabel>Folders</DataListLabel>
+          <DataListValue>{selectedDetails?.directoryCount ?? "-"}</DataListValue>
+        </DataListItem>
+        <DataListItem>
+          <DataListLabel>Added</DataListLabel>
+          <DataListValue>{formatDate(repository.addedAt)}</DataListValue>
+        </DataListItem>
+        <DataListItem>
+          <DataListLabel>Last updated</DataListLabel>
+          <DataListValue>{formatDate(repository.indexedAt)}</DataListValue>
+        </DataListItem>
+      </DataList>
       <StartHerePanel repository={repository} />
     </div>
   );
@@ -66,18 +84,18 @@ export default function Repository({
   if (repositories.length === 0) {
     return (
       <div className="flex flex-1 items-center justify-center p-6">
-        <div className="max-w-md text-center">
-          <h1 className="text-2xl font-semibold tracking-[-0.05em] text-foreground">
-            No repositories yet
-          </h1>
-          <p className="mt-2 text-sm text-muted-foreground">
-            Add a GitHub repository to clone it locally and start exploring its
-            files.
-          </p>
-          <Button className="mt-6 rounded-none" onClick={() => navigate("/")}>
-            Add repository
-          </Button>
-        </div>
+        <Empty variant="plain">
+          <EmptyHeader>
+            <EmptyTitle>No repositories yet</EmptyTitle>
+            <EmptyDescription>
+              Add a GitHub repository to clone it locally and start exploring its
+              files.
+            </EmptyDescription>
+          </EmptyHeader>
+          <EmptyContent>
+            <Button onClick={() => navigate("/")}>Add repository</Button>
+          </EmptyContent>
+        </Empty>
       </div>
     );
   }
@@ -87,14 +105,12 @@ export default function Repository({
   if (!repository) {
     return (
       <div className="flex flex-1 items-center justify-center p-6">
-        <div className="text-center">
-          <h1 className="text-2xl font-semibold tracking-[-0.05em] text-foreground">
-            Choose a repository
-          </h1>
-          <p className="mt-2 text-sm text-muted-foreground">
-            Select a repository from the sidebar.
-          </p>
-        </div>
+        <Empty variant="plain">
+          <EmptyHeader>
+            <EmptyTitle>Choose a repository</EmptyTitle>
+            <EmptyDescription>Select a repository from the sidebar.</EmptyDescription>
+          </EmptyHeader>
+        </Empty>
       </div>
     );
   }
@@ -152,66 +168,68 @@ export default function Repository({
     <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
       <header className="shrink-0 px-4 pb-3 pt-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="min-w-0">
-            <p className="text-xs font-medium uppercase tracking-widest text-muted-foreground">
-              Repository
-            </p>
-            <h1 className="mt-1 text-2xl font-semibold tracking-[-0.055em] text-foreground">
-              {repository.name}
-            </h1>
-            <p
-              className="mt-1 max-w-2xl truncate text-sm text-muted-foreground"
-              title={repository.url}
-            >
-              {repository.url}
-            </p>
+          <div className="min-w-0 max-w-2xl">
+            <h1 className="type-title text-text-1">{repository.name}</h1>
+            <div className="mt-1 text-text-2 type-body-sm">
+              <Truncate>{repository.url}</Truncate>
+            </div>
           </div>
 
           <Button
-            variant="outline"
+            variant="secondary"
             size="sm"
             onClick={handleSync}
-            disabled={isSyncing || isDiscarding || !repository.url}
+            pending={isSyncing}
+            pendingLabel="Refreshing"
+            disabled={isDiscarding || !repository.url}
             title={
               repository.url
                 ? "Check the remote for new commits"
                 : "This repository has no remote to check"
             }
           >
-            <RefreshCw className={cn("size-3.5", isSyncing && "animate-spin")} />
-            {isSyncing ? "Refreshing…" : "Refresh now"}
+            <Icon icon={Retry} />
+            Refresh now
           </Button>
         </div>
 
         {syncError && (
-          <p className="mt-3 text-sm text-destructive">{syncError}</p>
+          <p className="mt-3 type-body-sm text-fail-text" role="status">
+            {syncError}
+          </p>
         )}
 
         {!syncError && syncNotice && (
-          <p className="mt-3 text-sm text-muted-foreground">{syncNotice}</p>
+          <p className="mt-3 type-body-sm text-text-2" role="status">
+            {syncNotice}
+          </p>
         )}
 
         {repository.syncState === "dirty" && (
-          <div className="mt-3 flex flex-wrap items-center justify-between gap-3 border border-destructive/30 bg-destructive/10 px-3 py-2">
-            <p className="text-sm text-destructive">
+          <Alert status="warn" className="mt-3">
+            <AlertTitle>
               Local changes in this clone are keeping it from updating.
-            </p>
-            <Button
-              variant="destructive"
-              size="sm"
-              onClick={handleDiscardChanges}
-              disabled={isDiscarding || isSyncing}
-            >
-              {isDiscarding ? "Discarding…" : "Discard changes and sync"}
-            </Button>
-          </div>
+            </AlertTitle>
+            <AlertAction>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={handleDiscardChanges}
+                pending={isDiscarding}
+                pendingLabel="Discarding"
+                disabled={isSyncing}
+              >
+                Discard changes and sync
+              </Button>
+            </AlertAction>
+          </Alert>
         )}
       </header>
 
       <RepoNav active={tab} onChange={setTab} />
 
       <div className="min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden p-4">
-        <div className="min-w-0">
+        <div className={tab === "ask" ? "h-full min-w-0" : "min-w-0"}>
           {tab === "overview" && (
             <Overview
               repository={repository}
@@ -227,10 +245,12 @@ export default function Repository({
             />
           )}
           {tab === "files" && (
-            <div className="border border-border">
+            <div className="border border-line-faint">
               {isInspecting ? (
-                <div className="p-3 text-sm text-muted-foreground">
-                  Reading repository files...
+                <div className="grid gap-2 p-3" role="status" aria-label="Reading repository files">
+                  <Skeleton className="h-4 w-1/3" />
+                  <Skeleton className="h-4 w-1/2" />
+                  <Skeleton className="h-4 w-2/5" />
                 </div>
               ) : (
                 <FileTree items={selectedDetails?.tree ?? []} />
