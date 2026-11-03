@@ -10,6 +10,7 @@ import Onboarding from "./pages/Onboarding";
 import Repository from "./pages/Repository";
 import Settings from "./pages/Settings";
 import { useRepositoryChats } from "./hooks/useRepositoryChats";
+import { GlazePortalProvider } from "@/lib/glaze/portal";
 
 function getRepositoryApi() {
   return window.electronAPI?.repositories;
@@ -119,6 +120,8 @@ export default function App() {
     const applyTheme = () => {
       const dark = theme === "dark" || (theme === "system" && prefersDark.matches);
       document.documentElement.classList.toggle("dark", dark);
+      // Glaze reads data-theme, not the dark class.
+      document.documentElement.dataset.theme = dark ? "dark" : "light";
     };
 
     applyTheme();
@@ -331,7 +334,8 @@ export default function App() {
   return (
     <TooltipProvider>
       <Router>
-        <div className="flex h-full w-full flex-col overflow-hidden bg-background font-sans text-foreground antialiased selection:bg-accent selection:text-foreground">
+        <div className="glaze flex h-full w-full flex-col overflow-hidden bg-background font-sans text-foreground antialiased selection:bg-accent selection:text-foreground">
+          <GlazePortalProvider>
           {/* Custom titlebar drag region */}
           <div
             className="shrink-0 w-full h-8 border-b border-sidebar-border bg-sidebar"
@@ -387,6 +391,7 @@ export default function App() {
               </Routes>
             </main>
           </div>
+          </GlazePortalProvider>
         </div>
       </Router>
     </TooltipProvider>
