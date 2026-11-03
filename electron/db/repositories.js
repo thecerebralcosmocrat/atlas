@@ -81,6 +81,22 @@ function listUnindexedRepositories() {
   return rows.map(mapIndexTargetRow);
 }
 
+// Repositories whose last index found no files. The set of indexable file types
+// grows (docs were added after code), so one that was empty then may have files
+// now. Walking a folder with nothing in it is cheap, so these are retried on
+// every launch rather than tracking an index version.
+function listEmptyIndexedRepositories() {
+  const rows = getDb()
+    .prepare(
+      `SELECT ${REPOSITORY_COLUMNS} FROM repos
+        WHERE indexed_at IS NOT NULL AND file_count = 0
+        ORDER BY id`,
+    )
+    .all();
+
+  return rows.map(mapIndexTargetRow);
+}
+
 // Repositories indexed before chunking existed: they have files but no chunks,
 // so semantic retrieval would silently fall back to lexical for them. Only
 // worth reporting when an embedder is configured, which the caller decides.
@@ -299,6 +315,7 @@ module.exports = {
   listRepositories,
   listUnindexedRepositories,
   listRepositoriesWithoutChunks,
+  listEmptyIndexedRepositories,
   listSyncableRepositories,
   findRepository,
   resolveRepositoryRowId,

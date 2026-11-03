@@ -258,12 +258,12 @@ test("startup backfill indexes a repository that was never indexed", async () =>
 
 test("repositories:ask grounds its answer in indexed file content", async () => {
   const userData = makeTempDir("atlas-userdata-");
-  // README.md is deliberately not an indexable extension, so any mention of
+  // notes.txt is deliberately not an indexable extension, so any mention of
   // the source in the answer must come from the indexed file.
   const repo = makeGitFixtureRepo({
     "index.js":
       "function createOrbitIndex(entries) {\n  return entries.map((entry) => entry.path);\n}\n",
-    "README.md": "# Fixture\n\nA tiny repository used to test grounded answers.\n",
+    "notes.txt": "A tiny repository used to test grounded answers.\n",
   });
   const repoUrl = `file:///${repo.replace(/\\/g, "/")}`;
   const { handlers } = await loadMain({ userData });
@@ -365,8 +365,8 @@ test("repositories:remove rejects an unknown repository", async () => {
 test("repositories:ask says so when a repository has nothing indexed", async () => {
   const userData = makeTempDir("atlas-userdata-");
   const repo = makeGitFixtureRepo({
-    "README.md":
-      "# Docs only\n\nThis repository contains documentation and no source files at all.\n",
+    "notes.txt":
+      "Plain text is not indexed: this repository has no source or doc files at all.\n",
   });
   const repoUrl = `file:///${repo.replace(/\\/g, "/")}`;
   const { handlers } = await loadMain({ userData });
@@ -481,3 +481,34 @@ test("a deletion during the startup backfill is not undone by the in-flight inde
   );
 });
 
+
+test("repositories:ask can answer from a Markdown-only repository", async () => {
+  const userData = makeTempDir("atlas-userdata-");
+  const repo = makeGitFixtureRepo({
+    "skills/pdf/SKILL.md":
+      "# PDF skill\n\nExtracts text from a quartzfox report and fills its forms.\n",
+    "README.md": "# My skills\n\nA folder of agent skills.\n",
+  });
+  const repoUrl = `file:///${repo.replace(/\\/g, "/")}`;
+  const { handlers } = await loadMain({ userData });
+  const previousApiKey = process.env.NVIDIA_NIM_API_KEY;
+
+  // Force the local fallback so the assertion is deterministic and offline.
+  delete process.env.NVIDIA_NIM_API_KEY;
+
+  try {
+    const added = await handlers.get("repositories:add")({ sender: {} }, repoUrl);
+    assert.strictEqual(added.fileCount, 2);
+
+    const answer = await handlers.get("repositories:ask")(
+      { sender: {} },
+      { repositoryId: added.id, question: "quartzfox" },
+    );
+
+    assert.doesNotMatch(answer, /not been indexed yet/i);
+    assert.match(answer, /SKILL\.md/);
+  } finally {
+    if (previousApiKey === undefined) delete process.env.NVIDIA_NIM_API_KEY;
+    else process.env.NVIDIA_NIM_API_KEY = previousApiKey;
+  }
+});

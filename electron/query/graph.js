@@ -5,6 +5,7 @@
 // builder is pure so the shape can be tested without a database.
 
 const { getDb } = require("../db/schema");
+const { SOURCE_FILES_ONLY } = require("../db/languages");
 
 function compareText(left, right) {
   return String(left ?? "").localeCompare(String(right ?? ""));
@@ -156,7 +157,7 @@ function getRepositoryGraph(repositoryId) {
 
   const db = getDb();
   const files = db
-    .prepare("SELECT id, path, language FROM files WHERE repo_id = ?")
+    .prepare(`SELECT id, path, language FROM files WHERE repo_id = ? AND ${SOURCE_FILES_ONLY}`)
     .all(repoId);
   const symbols = db
     .prepare(
