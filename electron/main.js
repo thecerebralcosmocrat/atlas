@@ -1613,6 +1613,26 @@ function createWindow() {
 
   win.removeMenu();
 
+  // The window only ever shows Atlas. A link inside the app (a README link in
+  // an answer, say) opens in the system browser; letting it navigate the
+  // window would leave no way back, since there is no address bar.
+  const isAppUrl = (url) =>
+    isDev ? url.startsWith("http://localhost:5173") : url.startsWith("file://");
+  const openLink = (url) => {
+    if (/^(https?|mailto):/i.test(url)) require("electron").shell.openExternal(url);
+  };
+
+  win.webContents.setWindowOpenHandler?.(({ url }) => {
+    openLink(url);
+    return { action: "deny" };
+  });
+  win.webContents.on?.("will-navigate", (event, url) => {
+    if (isAppUrl(url)) return;
+
+    event.preventDefault();
+    openLink(url);
+  });
+
   if (isDev) {
     win.loadURL("http://localhost:5173");
     // win.webContents.openDevTools();
