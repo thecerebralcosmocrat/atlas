@@ -4,13 +4,11 @@ import {
   Routes,
   Route,
 } from "react-router-dom";
-import { TooltipProvider } from "@/components/ui/tooltip";
-import Sidebar from "./components/Sidebar";
+import AppShell from "./components/AppShell";
 import Onboarding from "./pages/Onboarding";
 import Repository from "./pages/Repository";
 import Settings from "./pages/Settings";
 import { useRepositoryChats } from "./hooks/useRepositoryChats";
-import { GlazePortalProvider } from "@/lib/glaze/portal";
 
 function getRepositoryApi() {
   return window.electronAPI?.repositories;
@@ -332,68 +330,52 @@ export default function App() {
   };
 
   return (
-    <TooltipProvider>
-      <Router>
-        <div className="glaze flex h-full w-full flex-col overflow-hidden bg-background font-sans text-foreground antialiased selection:bg-accent selection:text-foreground">
-          <GlazePortalProvider>
-          {/* Custom titlebar drag region */}
-          <div
-            className="shrink-0 w-full h-8 border-b border-sidebar-border bg-sidebar"
-            style={{ WebkitAppRegion: "drag" }}
+    <Router>
+      <AppShell
+        sidebar={{
+          repositories,
+          profiles,
+          activeProfile,
+          selectedRepositoryId,
+          onSelectRepository: setSelectedRepositoryId,
+          onSwitchProfile: handleSwitchProfile,
+          onRequestDeleteRepository: handleDeleteRepository,
+        }}
+      >
+        <Routes>
+          <Route
+            path="/"
+            element={<Onboarding onAddRepository={handleAddRepository} />}
           />
-
-          <div className="flex flex-1 overflow-hidden">
-            <Sidebar
-              repositories={repositories}
-              profiles={profiles}
-              activeProfile={activeProfile}
-              selectedRepositoryId={selectedRepositoryId}
-              onSelectRepository={setSelectedRepositoryId}
-              onSwitchProfile={handleSwitchProfile}
-              onRequestDeleteRepository={handleDeleteRepository}
-            />
-
-            <main className="flex flex-1 flex-col overflow-hidden bg-background">
-              <Routes>
-                <Route
-                  path="/"
-                  element={<Onboarding onAddRepository={handleAddRepository} />}
-                />
-                <Route
-                  path="/settings"
-                  element={
-                    <Settings
-                      settings={settings}
-                      profiles={profiles}
-                      onUpdateSettings={handleUpdateSettings}
-                      onCreateProfile={handleCreateProfile}
-                      onUpdateProfile={handleUpdateProfile}
-                      onDeleteProfile={handleDeleteProfile}
-                    />
-                  }
-                />
-                <Route
-                  path="/repo"
-                  element={
-                    <Repository
-                      repositories={repositories}
-                      selectedRepository={selectedRepository}
-                      selectedDetails={selectedDetails}
-                      isInspecting={isInspecting}
-                      chats={chats}
-                      onSyncRepository={handleSyncRepository}
-                      onDiscardRepositoryChanges={
-                        handleDiscardRepositoryChanges
-                      }
-                    />
-                  }
-                />
-              </Routes>
-            </main>
-          </div>
-          </GlazePortalProvider>
-        </div>
-      </Router>
-    </TooltipProvider>
+          <Route
+            path="/settings"
+            element={
+              <Settings
+                settings={settings}
+                profiles={profiles}
+                onUpdateSettings={handleUpdateSettings}
+                onCreateProfile={handleCreateProfile}
+                onUpdateProfile={handleUpdateProfile}
+                onDeleteProfile={handleDeleteProfile}
+              />
+            }
+          />
+          <Route
+            path="/repo"
+            element={
+              <Repository
+                repositories={repositories}
+                selectedRepository={selectedRepository}
+                selectedDetails={selectedDetails}
+                isInspecting={isInspecting}
+                chats={chats}
+                onSyncRepository={handleSyncRepository}
+                onDiscardRepositoryChanges={handleDiscardRepositoryChanges}
+              />
+            }
+          />
+        </Routes>
+      </AppShell>
+    </Router>
   );
 }
