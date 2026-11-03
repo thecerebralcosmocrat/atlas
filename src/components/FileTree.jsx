@@ -1,30 +1,49 @@
+import { Badge } from "@/components/glaze/ui/badge";
+import {
+  Item,
+  ItemContent,
+  ItemGroup,
+  ItemTitle,
+} from "@/components/glaze/ui/item";
+import { Truncate } from "@/components/glaze/ui/truncate";
+
+function flatten(items, depth, parentKey, rows) {
+  for (const item of items) {
+    const key = `${parentKey}/${item.name}`;
+
+    rows.push({ key, item, depth });
+    if (item.children?.length > 0) {
+      flatten(item.children, depth + 1, key, rows);
+    }
+  }
+  return rows;
+}
+
+// Glaze has no tree: one list of rows, indented by depth from the space tokens.
 export default function FileTree({ items, depth = 0 }) {
   if (!items?.length) return null;
 
+  const rows = flatten(items, depth, "", []);
+
   return (
-    <div
-      className={
-        depth === 0 ? "flex flex-col gap-1" : "mt-1 flex flex-col gap-1"
-      }
-    >
-      {items.map((item) => (
-        <div key={`${depth}-${item.name}`}>
-          <div
-            className="flex min-w-0 items-center gap-2 px-2 py-1.5 text-sm text-muted-foreground"
-            style={{ paddingInlineStart: `${8 + depth * 16}px` }}
-          >
-            <span className="truncate text-foreground" title={item.name}>
-              {item.name}
-            </span>
-            <span className="shrink-0 text-[11px] uppercase tracking-wide">
-              {item.type}
-            </span>
-          </div>
-          {item.children?.length > 0 && (
-            <FileTree items={item.children} depth={depth + 1} />
-          )}
-        </div>
+    <ItemGroup variant="plain" aria-label="Repository files">
+      {rows.map(({ key, item, depth: rowDepth }) => (
+        <Item
+          key={key}
+          size="sm"
+          className="ps-(--indent)"
+          style={{
+            "--indent": `calc(var(--space-3) + ${rowDepth} * var(--space-4))`,
+          }}
+        >
+          <ItemContent>
+            <ItemTitle>
+              <Truncate className="mono">{item.name}</Truncate>
+            </ItemTitle>
+          </ItemContent>
+          <Badge>{item.type}</Badge>
+        </Item>
       ))}
-    </div>
+    </ItemGroup>
   );
 }

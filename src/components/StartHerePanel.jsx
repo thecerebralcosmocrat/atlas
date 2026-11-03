@@ -1,7 +1,43 @@
 import { useEffect, useMemo, useState } from "react";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/glaze/ui/card";
+import { Badge } from "@/components/glaze/ui/badge";
+import {
+  Empty,
+  EmptyHeader,
+  EmptyTitle,
+} from "@/components/glaze/ui/empty-state";
+import {
+  Item,
+  ItemContent,
+  ItemGroup,
+  ItemMeta,
+  ItemTitle,
+} from "@/components/glaze/ui/item";
+import { Skeleton, SkeletonSwap } from "@/components/glaze/ui/skeleton";
+import { Truncate } from "@/components/glaze/ui/truncate";
 
 function getStartHereApi() {
   return window.electronAPI?.graph?.startHere;
+}
+
+function RowsSkeleton() {
+  return (
+    <ItemGroup variant="plain" aria-label="Loading entry points">
+      {[0, 1, 2].map((row) => (
+        <Item key={row}>
+          <ItemContent>
+            <Skeleton className="h-4 w-1/2" />
+          </ItemContent>
+        </Item>
+      ))}
+    </ItemGroup>
+  );
 }
 
 export default function StartHerePanel({ repository }) {
@@ -41,59 +77,68 @@ export default function StartHerePanel({ repository }) {
   const entryCount = startHere?.entries?.length ?? 0;
 
   return (
-    <section className="border border-border">
-      <div className="border-b border-border px-4 py-3">
-        <h2 className="text-sm font-medium text-foreground">Start here</h2>
-        <p className="mt-1 text-xs text-muted-foreground">
+    <Card>
+      <CardHeader>
+        <CardTitle>Start here</CardTitle>
+        <CardDescription>
           {entryCount} entry {entryCount === 1 ? "point" : "points"} ·{" "}
-          {readingPath.length} {readingPath.length === 1 ? "file" : "files"}{" "}
-          to read
-        </p>
-      </div>
+          {readingPath.length} {readingPath.length === 1 ? "file" : "files"} to
+          read
+        </CardDescription>
+      </CardHeader>
 
-      {isLoading && (
-        <div className="px-4 py-3 text-sm text-muted-foreground">
-          Finding entry points...
-        </div>
-      )}
+      <CardContent flush>
+        <SkeletonSwap
+          loading={isLoading}
+          fallback={<RowsSkeleton />}
+          label="Finding entry points"
+        >
+          {error && (
+            <Empty reason="error" variant="plain" size="sm">
+              <EmptyHeader>
+                <EmptyTitle>{error}</EmptyTitle>
+              </EmptyHeader>
+            </Empty>
+          )}
 
-      {error && (
-        <div className="px-4 py-3 text-sm text-destructive">{error}</div>
-      )}
+          {!error && readingPath.length === 0 && (
+            <Empty reason="empty" variant="plain" size="sm">
+              <EmptyHeader>
+                <EmptyTitle>
+                  No entry points or imports were found. Re-index this
+                  repository to build the reading path.
+                </EmptyTitle>
+              </EmptyHeader>
+            </Empty>
+          )}
 
-      {!isLoading && !error && readingPath.length === 0 && (
-        <div className="px-4 py-3 text-sm text-muted-foreground">
-          No entry points or imports were found. Re-index this repository to
-          build the reading path.
-        </div>
-      )}
-
-      {!isLoading && !error && readingPath.length > 0 && (
-        <ol className="divide-y divide-border">
-          {readingPath.map((item, index) => (
-            <li
-              key={item.path}
-              className="flex items-center gap-2 px-4 py-2 text-sm"
-            >
-              <span className="flex size-5 shrink-0 items-center justify-center bg-muted text-[11px] text-muted-foreground">
-                {index + 1}
-              </span>
-              <span className="truncate text-foreground" title={item.path}>
-                {item.path}
-              </span>
-              {item.isEntry ? (
-                <span className="ms-auto shrink-0 bg-background px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
-                  {item.reason}
-                </span>
-              ) : (
-                <span className="ms-auto shrink-0 text-[11px] uppercase tracking-wide text-muted-foreground">
-                  {item.fanIn} importer{item.fanIn === 1 ? "" : "s"}
-                </span>
-              )}
-            </li>
-          ))}
-        </ol>
-      )}
-    </section>
+          {!error && readingPath.length > 0 && (
+            <ItemGroup variant="plain" aria-label="Reading path">
+              {readingPath.map((item, index) => (
+                <Item key={item.path}>
+                  <span className="w-5 shrink-0 type-caption text-text-2 tabular-nums">
+                    {index + 1}
+                  </span>
+                  <ItemContent>
+                    <ItemTitle>
+                      <Truncate position="middle" className="mono">
+                        {item.path}
+                      </Truncate>
+                    </ItemTitle>
+                  </ItemContent>
+                  {item.isEntry ? (
+                    <Badge>{item.reason}</Badge>
+                  ) : (
+                    <ItemMeta>
+                      {item.fanIn} importer{item.fanIn === 1 ? "" : "s"}
+                    </ItemMeta>
+                  )}
+                </Item>
+              ))}
+            </ItemGroup>
+          )}
+        </SkeletonSwap>
+      </CardContent>
+    </Card>
   );
 }

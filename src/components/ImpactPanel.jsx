@@ -1,7 +1,72 @@
 import { useEffect, useMemo, useState } from "react";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/glaze/ui/card";
+import { Badge } from "@/components/glaze/ui/badge";
+import { ComboboxField } from "@/components/glaze/ui/combobox";
+import {
+  Empty,
+  EmptyHeader,
+  EmptyTitle,
+} from "@/components/glaze/ui/empty-state";
+import { Field, FieldLabel } from "@/components/glaze/ui/field";
+import {
+  Item,
+  ItemContent,
+  ItemGroup,
+  ItemTitle,
+} from "@/components/glaze/ui/item";
+import { Skeleton, SkeletonSwap } from "@/components/glaze/ui/skeleton";
+import { Truncate } from "@/components/glaze/ui/truncate";
 
 function getImpactApi() {
   return window.electronAPI?.graph?.impact;
+}
+
+function RowsSkeleton() {
+  return (
+    <ItemGroup variant="plain" aria-label="Loading">
+      {[0, 1, 2].map((row) => (
+        <Item key={row}>
+          <ItemContent>
+            <Skeleton className="h-4 w-1/2" />
+          </ItemContent>
+        </Item>
+      ))}
+    </ItemGroup>
+  );
+}
+
+function PathRow({ path, tag }) {
+  return (
+    <Item size="sm">
+      <ItemContent>
+        <ItemTitle>
+          <Truncate position="middle" className="mono">
+            {path}
+          </Truncate>
+        </ItemTitle>
+      </ItemContent>
+      {tag && <Badge>{tag}</Badge>}
+    </Item>
+  );
+}
+
+function Section({ title, children }) {
+  return (
+    <div className="flex flex-col gap-1 py-3">
+      <h3 className="px-3 type-label text-text-2">{title}</h3>
+      {children}
+    </div>
+  );
+}
+
+function Note({ children }) {
+  return <p className="px-3 type-body-sm text-text-2">{children}</p>;
 }
 
 export default function ImpactPanel({ repository }) {
@@ -40,141 +105,124 @@ export default function ImpactPanel({ repository }) {
   const unreachable = data?.unreachable ?? [];
   const impact = data?.impact ?? null;
 
+  const filePaths = useMemo(() => files.map((file) => file.path), [files]);
+
   return (
-    <section className="border border-border">
-      <div className="border-b border-border px-4 py-3">
-        <h2 className="text-sm font-medium text-foreground">Impact</h2>
-        <p className="mt-1 text-xs text-muted-foreground">
+    <Card>
+      <CardHeader>
+        <CardTitle>Impact</CardTitle>
+        <CardDescription>
           {files.length} indexed {files.length === 1 ? "file" : "files"} ·{" "}
           {unreachable.length} not reachable from an entry point
-        </p>
-      </div>
+        </CardDescription>
+      </CardHeader>
 
-      {error && (
-        <div className="px-4 py-3 text-sm text-destructive">{error}</div>
-      )}
+      <CardContent flush>
+        <SkeletonSwap
+          loading={isLoading}
+          fallback={<RowsSkeleton />}
+          label="Analyzing repository"
+        >
+          {error && (
+            <Empty reason="error" variant="plain" size="sm">
+              <EmptyHeader>
+                <EmptyTitle>{error}</EmptyTitle>
+              </EmptyHeader>
+            </Empty>
+          )}
 
-      {!error && !isLoading && files.length === 0 && (
-        <div className="px-4 py-3 text-sm text-muted-foreground">
-          No indexed files to analyze. Re-index this repository.
-        </div>
-      )}
+          {!error && !isLoading && files.length === 0 && (
+            <Empty reason="empty" variant="plain" size="sm">
+              <EmptyHeader>
+                <EmptyTitle>
+                  No indexed files to analyze. Re-index this repository.
+                </EmptyTitle>
+              </EmptyHeader>
+            </Empty>
+          )}
 
-      {files.length > 0 && (
-        <div className="px-4 py-3">
-          <label
-            htmlFor="impact-target"
-            className="text-xs font-medium text-muted-foreground"
-          >
-            What does changing a file affect?
-          </label>
-          <select
-            id="impact-target"
-            value={selectedPath}
-            onChange={(event) => setSelectedPath(event.target.value)}
-            className="mt-1 w-full rounded-none border border-border bg-background px-2 py-1.5 text-sm text-foreground"
-          >
-            <option value="">Choose a file...</option>
-            {files.map((file) => (
-              <option key={file.id ?? file.path} value={file.path}>
-                {file.path}
-              </option>
-            ))}
-          </select>
-        </div>
-      )}
-
-      {!error && impact && (
-        <div className="flex flex-col gap-3 px-4 py-3 text-xs">
-          <div>
-            <div className="font-medium text-muted-foreground">
-              Imported directly by ({impact.importers.length})
-            </div>
-            {impact.importers.length === 0 ? (
-              <div className="mt-1 text-muted-foreground">
-                Nothing in the index imports this file.
-              </div>
-            ) : (
-              <ul className="mt-1 flex flex-col gap-1">
-                {impact.importers.map((importer) => (
-                  <li
-                    key={importer.path}
-                    className="flex items-center gap-2"
-                  >
-                    <span
-                      className="truncate text-foreground"
-                      title={importer.path}
-                    >
-                      {importer.path}
-                    </span>
-                    <span className="ms-auto shrink-0 text-[10px] uppercase tracking-wide text-muted-foreground">
-                      {importer.importType}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-
-          <div>
-            <div className="font-medium text-muted-foreground">
-              Blast radius ({impact.dependents.length})
-            </div>
-            {impact.dependents.length === 0 ? (
-              <div className="mt-1 text-muted-foreground">
-                No other indexed file depends on it.
-              </div>
-            ) : (
-              <ul className="mt-1 flex flex-col gap-1">
-                {impact.dependents.slice(0, 20).map((dependent) => (
-                  <li key={dependent.path} className="flex items-center gap-2">
-                    <span
-                      className="truncate text-foreground"
-                      title={dependent.path}
-                    >
-                      {dependent.path}
-                    </span>
-                    <span className="ms-auto shrink-0 text-[10px] uppercase tracking-wide text-muted-foreground">
-                      {dependent.distance} hop
-                      {dependent.distance === 1 ? "" : "s"}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-        </div>
-      )}
-
-      {!error && !isLoading && unreachable.length > 0 && (
-        <div className="px-4 py-3 text-xs">
-          <div className="font-medium text-muted-foreground">
-            Not reachable from an entry point ({unreachable.length})
-          </div>
-          <ul className="mt-1 flex flex-col gap-1">
-            {unreachable.slice(0, 12).map((filePath) => (
-              <li
-                key={filePath}
-                className="truncate text-foreground"
-                title={filePath}
-              >
-                {filePath}
-              </li>
-            ))}
-          </ul>
-          {unreachable.length > 12 && (
-            <div className="mt-1 text-muted-foreground">
-              ...and {unreachable.length - 12} more
+          {files.length > 0 && (
+            <div className="px-3 py-3">
+              <Field>
+                <FieldLabel>What does changing a file affect?</FieldLabel>
+                <ComboboxField
+                  items={filePaths}
+                  value={selectedPath || null}
+                  onValueChange={(value) => setSelectedPath(value ?? "")}
+                  placeholder="Choose a file..."
+                  emptyText="No indexed file matches."
+                  showClear
+                  className="mono"
+                />
+              </Field>
             </div>
           )}
-        </div>
-      )}
 
-      {!error && !isLoading && data && !data.hasEntryPoints && (
-        <div className="px-4 py-3 text-xs text-muted-foreground">
-          No entry points were found, so reachability cannot be judged yet.
-        </div>
-      )}
-    </section>
+          {!error && impact && (
+            <>
+              <Section
+                title={`Imported directly by (${impact.importers.length})`}
+              >
+                {impact.importers.length === 0 ? (
+                  <Note>Nothing in the index imports this file.</Note>
+                ) : (
+                  <ItemGroup variant="plain" aria-label="Importers">
+                    {impact.importers.map((importer) => (
+                      <PathRow
+                        key={importer.path}
+                        path={importer.path}
+                        tag={importer.importType}
+                      />
+                    ))}
+                  </ItemGroup>
+                )}
+              </Section>
+
+              <Section title={`Blast radius (${impact.dependents.length})`}>
+                {impact.dependents.length === 0 ? (
+                  <Note>No other indexed file depends on it.</Note>
+                ) : (
+                  <ItemGroup variant="plain" aria-label="Dependents">
+                    {impact.dependents.slice(0, 20).map((dependent) => (
+                      <PathRow
+                        key={dependent.path}
+                        path={dependent.path}
+                        tag={`${dependent.distance} hop${
+                          dependent.distance === 1 ? "" : "s"
+                        }`}
+                      />
+                    ))}
+                  </ItemGroup>
+                )}
+              </Section>
+            </>
+          )}
+
+          {!error && !isLoading && unreachable.length > 0 && (
+            <Section
+              title={`Not reachable from an entry point (${unreachable.length})`}
+            >
+              <ItemGroup variant="plain" aria-label="Unreachable files">
+                {unreachable.slice(0, 12).map((filePath) => (
+                  <PathRow key={filePath} path={filePath} />
+                ))}
+              </ItemGroup>
+              {unreachable.length > 12 && (
+                <Note>...and {unreachable.length - 12} more</Note>
+              )}
+            </Section>
+          )}
+
+          {!error && !isLoading && data && !data.hasEntryPoints && (
+            <div className="py-3">
+              <Note>
+                No entry points were found, so reachability cannot be judged
+                yet.
+              </Note>
+            </div>
+          )}
+        </SkeletonSwap>
+      </CardContent>
+    </Card>
   );
 }
