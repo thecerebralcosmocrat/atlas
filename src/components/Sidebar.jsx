@@ -32,7 +32,6 @@ import {
   ItemDescription,
   ItemGroup,
   ItemLink,
-  ItemMedia,
   ItemTitle,
 } from "@/components/glaze/ui/item";
 
@@ -225,27 +224,24 @@ export default function Sidebar({
       </div>
 
       <div className="flex shrink-0 flex-col gap-2 border-t border-line-faint p-3">
-        <ItemGroup variant="plain" aria-label="Application">
-          <Item selected={isSettingsActive}>
-            <ItemMedia variant="icon">
-              <Icon icon={Settings} />
-            </ItemMedia>
-            <ItemContent>
-              <ItemTitle>
-                <ItemLink
-                  href="#/settings"
-                  aria-current={isSettingsActive ? "page" : undefined}
-                  onClick={(event) => {
-                    event.preventDefault();
-                    navigate("/settings");
-                  }}
-                >
-                  Settings
-                </ItemLink>
-              </ItemTitle>
-            </ItemContent>
-          </Item>
-        </ItemGroup>
+        <Button
+          render={
+            <a
+              href="#/settings"
+              aria-current={isSettingsActive ? "page" : undefined}
+              onClick={(event) => {
+                event.preventDefault();
+                navigate("/settings");
+              }}
+            />
+          }
+          nativeButton={false}
+          variant={isSettingsActive ? "secondary" : "ghost"}
+          className="w-full justify-start"
+        >
+          <Icon icon={Settings} />
+          Settings
+        </Button>
 
         <DropdownMenu>
           <DropdownMenuTrigger
