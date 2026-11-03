@@ -42,5 +42,5 @@ export default [
     processor: 'glaze/standalone',
     rules: glaze.configs.app.rules,
   },
-  {files: ['**/components/glaze/{ui,ai}/**', '**/components/glaze/icon.tsx', '**/lib/glaze/**'], rules: glaze.configs.source.rules},
+  {files: ['**/components/glaze/{ui,ai}/**', '**/components/glaze/icon.{tsx,jsx}', '**/lib/glaze/**'], rules: glaze.configs.source.rules},
 ];

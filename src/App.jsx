@@ -117,8 +117,7 @@ export default function App() {
 
     const applyTheme = () => {
       const dark = theme === "dark" || (theme === "system" && prefersDark.matches);
-      document.documentElement.classList.toggle("dark", dark);
-      // Glaze reads data-theme, not the dark class.
+      // Glaze reads data-theme.
       document.documentElement.dataset.theme = dark ? "dark" : "light";
     };
 
