@@ -3,9 +3,9 @@ import {
   HashRouter as Router,
   Routes,
   Route,
+  Navigate,
 } from "react-router-dom";
-import { TooltipProvider } from "@/components/ui/tooltip";
-import Sidebar from "./components/Sidebar";
+import AppShell from "./components/AppShell";
 import Onboarding from "./pages/Onboarding";
 import Repository from "./pages/Repository";
 import Settings from "./pages/Settings";
@@ -25,6 +25,9 @@ function getProfileApi() {
 
 export default function App() {
   const [repositories, setRepositories] = useState([]);
+  // False until the first list arrives, so the home route does not flash the
+  // add form for a person who already has repositories.
+  const [repositoriesLoaded, setRepositoriesLoaded] = useState(false);
   const [profiles, setProfiles] = useState([]);
   const [selectedRepositoryId, setSelectedRepositoryId] = useState(null);
   const [selectedDetails, setSelectedDetails] = useState(null);
@@ -118,7 +121,8 @@ export default function App() {
 
     const applyTheme = () => {
       const dark = theme === "dark" || (theme === "system" && prefersDark.matches);
-      document.documentElement.classList.toggle("dark", dark);
+      // Glaze reads data-theme.
+      document.documentElement.dataset.theme = dark ? "dark" : "light";
     };
 
     applyTheme();
@@ -132,13 +136,17 @@ export default function App() {
 
   useEffect(() => {
     async function loadRepositories() {
-      if (!repositoryApi) return;
+      if (!repositoryApi) {
+        setRepositoriesLoaded(true);
+        return;
+      }
 
       // The main process scopes this to the active profile. Switching
       // profiles therefore re-reads the list and cannot leave a repository
       // from the previous profile selected.
       const storedRepositories = await repositoryApi.list();
       setRepositories(storedRepositories);
+      setRepositoriesLoaded(true);
       setSelectedRepositoryId((currentId) => {
         const stillListed = storedRepositories.some(
           (repository) => repository.id === currentId,
@@ -210,17 +218,19 @@ export default function App() {
     return repository;
   };
 
-  const handleAskRepository = async (repositoryId, question, onText) => {
+  const handleAskRepository = async (repositoryId, question, onText, requestId) => {
     if (!repositoryApi) {
       throw new Error("Repository Q&A is only available in the Electron app.");
     }
 
-    return repositoryApi.ask(repositoryId, question, onText);
+    return repositoryApi.ask(repositoryId, question, onText, requestId);
   };
+
+  const handleStopAsk = (requestId) => repositoryApi?.cancelAsk?.(requestId);
 
   // Held here, above the router, so a conversation survives switching tabs,
   // pages, and repositories. Dropped when the profile changes.
-  const chats = useRepositoryChats(handleAskRepository);
+  const chats = useRepositoryChats(handleAskRepository, handleStopAsk);
   const { reset: resetChats, remove: removeChat } = chats;
 
   useEffect(() => {
@@ -329,66 +339,63 @@ export default function App() {
   };
 
   return (
-    <TooltipProvider>
-      <Router>
-        <div className="flex h-full w-full flex-col overflow-hidden bg-background font-sans text-foreground antialiased selection:bg-accent selection:text-foreground">
-          {/* Custom titlebar drag region */}
-          <div
-            className="shrink-0 w-full h-8 border-b border-sidebar-border bg-sidebar"
-            style={{ WebkitAppRegion: "drag" }}
+    <Router>
+      <AppShell
+        sidebar={{
+          repositories,
+          profiles,
+          activeProfile,
+          selectedRepositoryId,
+          onSelectRepository: setSelectedRepositoryId,
+          onSwitchProfile: handleSwitchProfile,
+          onRequestDeleteRepository: handleDeleteRepository,
+        }}
+      >
+        <Routes>
+          {/* Chat is the home page; with nothing indexed yet, start by adding one. */}
+          <Route
+            path="/"
+            element={
+              !repositoriesLoaded ? null : repositories.length > 0 ? (
+                <Navigate to="/repo?tab=ask" replace />
+              ) : (
+                <Onboarding onAddRepository={handleAddRepository} />
+              )
+            }
           />
-
-          <div className="flex flex-1 overflow-hidden">
-            <Sidebar
-              repositories={repositories}
-              profiles={profiles}
-              activeProfile={activeProfile}
-              selectedRepositoryId={selectedRepositoryId}
-              onSelectRepository={setSelectedRepositoryId}
-              onSwitchProfile={handleSwitchProfile}
-              onRequestDeleteRepository={handleDeleteRepository}
-            />
-
-            <main className="flex flex-1 flex-col overflow-hidden bg-background">
-              <Routes>
-                <Route
-                  path="/"
-                  element={<Onboarding onAddRepository={handleAddRepository} />}
-                />
-                <Route
-                  path="/settings"
-                  element={
-                    <Settings
-                      settings={settings}
-                      profiles={profiles}
-                      onUpdateSettings={handleUpdateSettings}
-                      onCreateProfile={handleCreateProfile}
-                      onUpdateProfile={handleUpdateProfile}
-                      onDeleteProfile={handleDeleteProfile}
-                    />
-                  }
-                />
-                <Route
-                  path="/repo"
-                  element={
-                    <Repository
-                      repositories={repositories}
-                      selectedRepository={selectedRepository}
-                      selectedDetails={selectedDetails}
-                      isInspecting={isInspecting}
-                      chats={chats}
-                      onSyncRepository={handleSyncRepository}
-                      onDiscardRepositoryChanges={
-                        handleDiscardRepositoryChanges
-                      }
-                    />
-                  }
-                />
-              </Routes>
-            </main>
-          </div>
-        </div>
-      </Router>
-    </TooltipProvider>
+          <Route
+            path="/add"
+            element={<Onboarding onAddRepository={handleAddRepository} />}
+          />
+          <Route
+            path="/settings"
+            element={
+              <Settings
+                settings={settings}
+                profiles={profiles}
+                onUpdateSettings={handleUpdateSettings}
+                onCreateProfile={handleCreateProfile}
+                onUpdateProfile={handleUpdateProfile}
+                onDeleteProfile={handleDeleteProfile}
+              />
+            }
+          />
+          <Route
+            path="/repo"
+            element={
+              <Repository
+                repositories={repositories}
+                selectedRepository={selectedRepository}
+                selectedDetails={selectedDetails}
+                isInspecting={isInspecting}
+                chats={chats}
+                onSyncRepository={handleSyncRepository}
+                onDiscardRepositoryChanges={handleDiscardRepositoryChanges}
+              />
+            }
+          />
+        </Routes>
+      </AppShell>
+    </Router>
   );
 }

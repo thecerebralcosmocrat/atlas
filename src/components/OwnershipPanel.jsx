@@ -1,7 +1,81 @@
 import { useEffect, useMemo, useState } from "react";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/glaze/ui/card";
+import { ComboboxField } from "@/components/glaze/ui/combobox";
+import {
+  Empty,
+  EmptyHeader,
+  EmptyTitle,
+} from "@/components/glaze/ui/empty-state";
+import { Field, FieldLabel } from "@/components/glaze/ui/field";
+import {
+  Item,
+  ItemContent,
+  ItemGroup,
+  ItemMeta,
+  ItemTitle,
+} from "@/components/glaze/ui/item";
+import { Skeleton, SkeletonSwap } from "@/components/glaze/ui/skeleton";
+import { Truncate } from "@/components/glaze/ui/truncate";
 
 function getOwnershipApi() {
   return window.electronAPI?.graph?.ownership;
+}
+
+function RowsSkeleton() {
+  return (
+    <ItemGroup variant="plain" aria-label="Loading">
+      {[0, 1, 2].map((row) => (
+        <Item key={row}>
+          <ItemContent>
+            <Skeleton className="h-4 w-1/2" />
+          </ItemContent>
+        </Item>
+      ))}
+    </ItemGroup>
+  );
+}
+
+function PathRow({ path, meta }) {
+  return (
+    <Item size="sm">
+      <ItemContent>
+        <ItemTitle>
+          <Truncate position="middle" className="mono">
+            {path}
+          </Truncate>
+        </ItemTitle>
+      </ItemContent>
+      <ItemMeta>{meta}</ItemMeta>
+    </Item>
+  );
+}
+
+function PersonRow({ name, meta }) {
+  return (
+    <Item size="sm">
+      <ItemContent>
+        <ItemTitle>
+          <Truncate>{name}</Truncate>
+        </ItemTitle>
+      </ItemContent>
+      <ItemMeta>{meta}</ItemMeta>
+    </Item>
+  );
+}
+
+function Section({ title, children }) {
+  return (
+    <div className="flex flex-col gap-1 py-3">
+      <h3 className="px-3 type-label text-text-2">{title}</h3>
+      {children}
+    </div>
+  );
 }
 
 export default function OwnershipPanel({ repository }) {
@@ -43,151 +117,141 @@ export default function OwnershipPanel({ repository }) {
   const file = data?.file ?? null;
   const commitCount = data?.commitCount ?? 0;
 
+  const filePaths = useMemo(() => files.map((entry) => entry.path), [files]);
+
   return (
-    <section className="border border-border">
-      <div className="border-b border-border px-4 py-3">
-        <h2 className="text-sm font-medium text-foreground">Ownership</h2>
-        <p className="mt-1 text-xs text-muted-foreground">
+    <Card>
+      <CardHeader>
+        <CardTitle>Ownership</CardTitle>
+        <CardDescription>
           {files.length} indexed {files.length === 1 ? "file" : "files"} ·{" "}
           {commitCount} {commitCount === 1 ? "commit" : "commits"}
           {data?.shallow ? " (limited history)" : ""}
-        </p>
-      </div>
+        </CardDescription>
+      </CardHeader>
 
-      {isLoading && (
-        <div className="px-4 py-3 text-sm text-muted-foreground">
-          Reading git history...
-        </div>
-      )}
+      <CardContent flush>
+        <SkeletonSwap
+          loading={isLoading}
+          fallback={<RowsSkeleton />}
+          label="Reading git history"
+        >
+          {error && (
+            <Empty reason="error" variant="plain" size="sm">
+              <EmptyHeader>
+                <EmptyTitle>{error}</EmptyTitle>
+              </EmptyHeader>
+            </Empty>
+          )}
 
-      {error && (
-        <div className="px-4 py-3 text-sm text-destructive">{error}</div>
-      )}
+          {!error && !isLoading && data && commitCount === 0 && (
+            <Empty reason="empty" variant="plain" size="sm">
+              <EmptyHeader>
+                <EmptyTitle>
+                  No git history is available for this clone, so ownership
+                  cannot be worked out. Re-add the repository to fetch its
+                  history.
+                </EmptyTitle>
+              </EmptyHeader>
+            </Empty>
+          )}
 
-      {!error && !isLoading && data && commitCount === 0 && (
-        <div className="px-4 py-3 text-sm text-muted-foreground">
-          No git history is available for this clone, so ownership cannot be
-          worked out. Re-add the repository to fetch its history.
-        </div>
-      )}
+          {!error && commitCount > 0 && files.length > 0 && (
+            <div className="px-3 py-3">
+              <Field>
+                <FieldLabel>Who should I ask about a file?</FieldLabel>
+                <ComboboxField
+                  items={filePaths}
+                  value={selectedPath || null}
+                  onValueChange={(value) => setSelectedPath(value ?? "")}
+                  placeholder="Choose a file..."
+                  emptyText="No indexed file matches."
+                  showClear
+                  className="mono"
+                />
+              </Field>
+            </div>
+          )}
 
-      {!error && commitCount > 0 && files.length > 0 && (
-        <div className="px-4 py-3">
-          <label
-            htmlFor="ownership-target"
-            className="text-xs font-medium text-muted-foreground"
-          >
-            Who should I ask about a file?
-          </label>
-          <select
-            id="ownership-target"
-            value={selectedPath}
-            onChange={(event) => setSelectedPath(event.target.value)}
-            className="mt-1 w-full rounded-none border border-border bg-background px-2 py-1.5 text-sm text-foreground"
-          >
-            <option value="">Choose a file...</option>
-            {files.map((entry) => (
-              <option key={entry.id ?? entry.path} value={entry.path}>
-                {entry.path}
-              </option>
-            ))}
-          </select>
-        </div>
-      )}
+          {!error && file && (
+            <Section
+              title={
+                file.commitCount === 0
+                  ? "No commits touch this file."
+                  : `Changed in ${file.commitCount} ${
+                      file.commitCount === 1 ? "commit" : "commits"
+                    }`
+              }
+            >
+              <ItemGroup variant="plain" aria-label="Authors of this file">
+                {file.authors.map((author) => (
+                  <PersonRow
+                    key={author.email || author.name}
+                    name={author.name}
+                    meta={`${author.count} ${
+                      author.count === 1 ? "commit" : "commits"
+                    } · ${String(author.lastChangedAt ?? "").slice(0, 10)}`}
+                  />
+                ))}
+              </ItemGroup>
+            </Section>
+          )}
 
-      {!error && file && (
-        <div className="flex flex-col gap-2 px-4 py-3 text-xs">
-          <div className="font-medium text-muted-foreground">
-            {file.commitCount === 0
-              ? "No commits touch this file."
-              : `Changed in ${file.commitCount} ${
-                  file.commitCount === 1 ? "commit" : "commits"
-                }`}
-          </div>
-          <ul className="flex flex-col gap-1">
-            {file.authors.map((author) => (
-              <li
-                key={author.email || author.name}
-                className="flex items-center gap-2"
-              >
-                <span className="truncate text-foreground">{author.name}</span>
-                <span className="ms-auto shrink-0 text-[10px] uppercase tracking-wide text-muted-foreground">
-                  {author.count} {author.count === 1 ? "commit" : "commits"} ·{" "}
-                  {String(author.lastChangedAt ?? "").slice(0, 10)}
-                </span>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
+          {!error && !isLoading && hotspots.length > 0 && (
+            <Section title={`Churn hotspots (${hotspots.length})`}>
+              <ItemGroup variant="plain" aria-label="Churn hotspots">
+                {hotspots.map((hotspot) => (
+                  <PathRow
+                    key={hotspot.path}
+                    path={hotspot.path}
+                    meta={`${hotspot.commitCount} ${
+                      hotspot.commitCount === 1 ? "commit" : "commits"
+                    }`}
+                  />
+                ))}
+              </ItemGroup>
+            </Section>
+          )}
 
-      {!error && !isLoading && hotspots.length > 0 && (
-        <div className="px-4 py-3 text-xs">
-          <div className="font-medium text-muted-foreground">
-            Churn hotspots ({hotspots.length})
-          </div>
-          <ul className="mt-1 flex flex-col gap-1">
-            {hotspots.map((hotspot) => (
-              <li key={hotspot.path} className="flex items-center gap-2">
-                <span className="truncate text-foreground" title={hotspot.path}>
-                  {hotspot.path}
-                </span>
-                <span className="ms-auto shrink-0 text-[10px] uppercase tracking-wide text-muted-foreground">
-                  {hotspot.commitCount}{" "}
-                  {hotspot.commitCount === 1 ? "commit" : "commits"}
-                </span>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
+          {!error && !isLoading && recent.length > 0 && (
+            <Section title={`Recently changed (${recent.length})`}>
+              <ItemGroup variant="plain" aria-label="Recently changed files">
+                {recent.map((entry) => (
+                  <PathRow
+                    key={entry.path}
+                    path={entry.path}
+                    meta={`${String(entry.lastChangedAt ?? "").slice(0, 10)}${
+                      entry.lastAuthor?.name
+                        ? ` · ${entry.lastAuthor.name}`
+                        : ""
+                    }`}
+                  />
+                ))}
+              </ItemGroup>
+            </Section>
+          )}
 
-      {!error && !isLoading && recent.length > 0 && (
-        <div className="px-4 py-3 text-xs">
-          <div className="font-medium text-muted-foreground">
-            Recently changed ({recent.length})
-          </div>
-          <ul className="mt-1 flex flex-col gap-1">
-            {recent.map((entry) => (
-              <li key={entry.path} className="flex items-center gap-2">
-                <span className="truncate text-foreground" title={entry.path}>
-                  {entry.path}
-                </span>
-                <span className="ms-auto shrink-0 text-[10px] uppercase tracking-wide text-muted-foreground">
-                  {String(entry.lastChangedAt ?? "").slice(0, 10)}
-                  {entry.lastAuthor?.name ? ` · ${entry.lastAuthor.name}` : ""}
-                </span>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-
-      {!error && !isLoading && contributors.length > 0 && (
-        <div className="px-4 py-3 text-xs">
-          <div className="font-medium text-muted-foreground">
-            Who has touched this most ({contributors.length})
-          </div>
-          <ul className="mt-1 flex flex-col gap-1">
-            {contributors.slice(0, 8).map((contributor) => (
-              <li
-                key={contributor.email || contributor.name}
-                className="flex items-center gap-2"
-              >
-                <span className="truncate text-foreground">
-                  {contributor.name}
-                </span>
-                <span className="ms-auto shrink-0 text-[10px] uppercase tracking-wide text-muted-foreground">
-                  {contributor.commitCount}{" "}
-                  {contributor.commitCount === 1 ? "commit" : "commits"} ·{" "}
-                  {contributor.fileCount}{" "}
-                  {contributor.fileCount === 1 ? "file" : "files"}
-                </span>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-    </section>
+          {!error && !isLoading && contributors.length > 0 && (
+            <Section
+              title={`Who has touched this most (${contributors.length})`}
+            >
+              <ItemGroup variant="plain" aria-label="Top contributors">
+                {contributors.slice(0, 8).map((contributor) => (
+                  <PersonRow
+                    key={contributor.email || contributor.name}
+                    name={contributor.name}
+                    meta={`${contributor.commitCount} ${
+                      contributor.commitCount === 1 ? "commit" : "commits"
+                    } · ${contributor.fileCount} ${
+                      contributor.fileCount === 1 ? "file" : "files"
+                    }`}
+                  />
+                ))}
+              </ItemGroup>
+            </Section>
+          )}
+        </SkeletonSwap>
+      </CardContent>
+    </Card>
   );
 }

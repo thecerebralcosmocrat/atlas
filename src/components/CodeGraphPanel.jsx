@@ -1,5 +1,32 @@
 import { useEffect, useMemo, useState } from "react";
-import { ChevronDown, ChevronRight } from "lucide-react";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/glaze/ui/card";
+import { Badge } from "@/components/glaze/ui/badge";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleGroup,
+  CollapsibleTrigger,
+} from "@/components/glaze/ui/collapsible";
+import {
+  Empty,
+  EmptyHeader,
+  EmptyTitle,
+} from "@/components/glaze/ui/empty-state";
+import {
+  Item,
+  ItemContent,
+  ItemGroup,
+  ItemMeta,
+  ItemTitle,
+} from "@/components/glaze/ui/item";
+import { Skeleton, SkeletonSwap } from "@/components/glaze/ui/skeleton";
+import { Truncate } from "@/components/glaze/ui/truncate";
 
 function getGraphApi() {
   return window.electronAPI?.graph;
@@ -45,43 +72,55 @@ function summarizeGraph(nodes, edges) {
   return { fileNodes, nodeById, symbolsByFile, importsByFile, externalCount };
 }
 
-function ImportList({ edges, nodeById, direction }) {
+function RowsSkeleton() {
+  return (
+    <div className="flex flex-col gap-3 px-3 py-3" aria-hidden>
+      {[0, 1, 2].map((row) => (
+        <Skeleton key={row} className="h-4 w-1/2" />
+      ))}
+    </div>
+  );
+}
+
+function Section({ title, children }) {
+  return (
+    <div className="flex flex-col gap-1 pt-2">
+      <h4 className="type-label text-text-2">{title}</h4>
+      {children}
+    </div>
+  );
+}
+
+function ImportList({ edges, nodeById, direction, label }) {
   if (edges.length === 0) {
-    return <div className="mt-1 text-muted-foreground">None</div>;
+    return <p className="type-body-sm text-text-2">None</p>;
   }
 
   return (
-    <ul className="mt-1 flex flex-col gap-1">
+    <ItemGroup variant="plain" aria-label={label}>
       {edges.map((edge, index) => {
         const otherId = direction === "outbound" ? edge.target : edge.source;
         const other = nodeById.get(otherId);
-        const label =
+        const text =
           other?.label ??
           edge.specifier ??
           (direction === "outbound" ? edge.target : edge.source);
 
         return (
-          <li
-            key={`${edge.specifier ?? "edge"}-${index}`}
-            className="flex items-center gap-2"
-          >
-            <span className="truncate text-foreground" title={label}>
-              {label}
-            </span>
-            {edge.importType && (
-              <span className="shrink-0 text-[10px] uppercase tracking-wide text-muted-foreground">
-                {edge.importType}
-              </span>
-            )}
-            {edge.external && (
-              <span className="shrink-0 bg-background px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
-                external
-              </span>
-            )}
-          </li>
+          <Item key={`${edge.specifier ?? "edge"}-${index}`} size="sm">
+            <ItemContent>
+              <ItemTitle>
+                <Truncate position="middle" className="mono">
+                  {text}
+                </Truncate>
+              </ItemTitle>
+            </ItemContent>
+            {edge.importType && <Badge>{edge.importType}</Badge>}
+            {edge.external && <Badge variant="outline">external</Badge>}
+          </Item>
         );
       })}
-    </ul>
+    </ItemGroup>
   );
 }
 
@@ -133,128 +172,123 @@ export default function CodeGraphPanel({ repository }) {
   );
 
   return (
-    <section className="border border-border">
-      <div className="border-b border-border px-4 py-3">
-        <h2 className="text-sm font-medium text-foreground">Code graph</h2>
-        <p className="mt-1 text-xs text-muted-foreground">
+    <Card>
+      <CardHeader>
+        <CardTitle>Code graph</CardTitle>
+        <CardDescription>
           {fileNodes.length} files · {symbolCount} symbols · {externalCount}{" "}
           external packages
-        </p>
-      </div>
+        </CardDescription>
+      </CardHeader>
 
-      {isLoading && (
-        <div className="px-4 py-3 text-sm text-muted-foreground">
-          Building graph...
-        </div>
-      )}
+      <CardContent flush>
+        <SkeletonSwap
+          loading={isLoading}
+          fallback={<RowsSkeleton />}
+          label="Building graph"
+        >
+          {error && (
+            <Empty reason="error" variant="plain" size="sm">
+              <EmptyHeader>
+                <EmptyTitle>{error}</EmptyTitle>
+              </EmptyHeader>
+            </Empty>
+          )}
 
-      {error && (
-        <div className="px-4 py-3 text-sm text-destructive">{error}</div>
-      )}
+          {!isLoading && !error && fileNodes.length === 0 && (
+            <Empty reason="empty" variant="plain" size="sm">
+              <EmptyHeader>
+                <EmptyTitle>
+                  No symbols or imports were found. Re-index this repository to
+                  build the graph.
+                </EmptyTitle>
+              </EmptyHeader>
+            </Empty>
+          )}
 
-      {!isLoading && !error && fileNodes.length === 0 && (
-        <div className="px-4 py-3 text-sm text-muted-foreground">
-          No symbols or imports were found. Re-index this repository to build
-          the graph.
-        </div>
-      )}
-
-      {!isLoading && !error && fileNodes.length > 0 && (
-        <div className="divide-y divide-border">
-          {fileNodes.map((file) => {
-            const isOpen = expandedId === file.id;
-            const symbols = symbolsByFile.get(file.id) ?? [];
-            const { outbound = [], inbound = [] } =
-              importsByFile.get(file.id) ?? {};
-            const Chevron = isOpen ? ChevronDown : ChevronRight;
-
-            return (
-              <div
-                key={file.id}
-                className="transition-colors duration-150 ease-out hover:bg-muted/40"
+          {!isLoading && !error && fileNodes.length > 0 && (
+            <div className="px-3">
+              <CollapsibleGroup
+                variant="plain"
+                value={expandedId == null ? [] : [expandedId]}
+                onValueChange={(value) => setExpandedId(value[0] ?? null)}
               >
-                <button
-                  type="button"
-                  aria-expanded={isOpen}
-                  onClick={() => setExpandedId(isOpen ? null : file.id)}
-                  className="flex w-full items-center gap-2 px-4 py-2 text-left text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
-                >
-                  <Chevron className="size-4 shrink-0 text-muted-foreground" />
-                  <span className="truncate text-foreground" title={file.path}>
-                    {file.path}
-                  </span>
-                  <span className="ms-auto shrink-0 text-[11px] uppercase tracking-wide text-muted-foreground">
-                    {symbols.length} sym · {outbound.length} out ·{" "}
-                    {inbound.length} in
-                  </span>
-                </button>
+                {fileNodes.map((file) => {
+                  const symbols = symbolsByFile.get(file.id) ?? [];
+                  const { outbound = [], inbound = [] } =
+                    importsByFile.get(file.id) ?? {};
 
-                {isOpen && (
-                  <div className="flex flex-col gap-3 px-4 pb-3 ps-10 text-xs">
-                    <div>
-                      <div className="font-medium text-muted-foreground">
-                        Symbols
-                      </div>
-                      {symbols.length === 0 ? (
-                        <div className="mt-1 text-muted-foreground">None</div>
-                      ) : (
-                        <ul className="mt-1 flex flex-col gap-1">
-                          {symbols.map((symbol) => (
-                            <li
-                              key={symbol.id}
-                              className="flex items-center gap-2"
-                            >
-                              <span className="shrink-0 bg-background px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
-                                {symbol.type}
-                              </span>
-                              <span
-                                className="truncate text-foreground"
-                                title={symbol.label}
-                              >
-                                {symbol.label}
-                              </span>
-                              <span className="shrink-0 text-muted-foreground">
-                                L{symbol.lineStart}–{symbol.lineEnd}
-                              </span>
-                              {symbol.isExported && (
-                                <span className="shrink-0 text-[10px] uppercase tracking-wide text-muted-foreground">
-                                  exported
-                                </span>
-                              )}
-                            </li>
-                          ))}
-                        </ul>
-                      )}
-                    </div>
+                  return (
+                    <Collapsible key={file.id} value={file.id}>
+                      <CollapsibleTrigger>
+                        <span className="flex w-full min-w-0 items-baseline gap-2">
+                          <span className="min-w-0 flex-1">
+                            <Truncate position="middle" className="mono">
+                              {file.path}
+                            </Truncate>
+                          </span>
+                          <span className="shrink-0 type-caption text-text-2">
+                            {symbols.length} sym · {outbound.length} out ·{" "}
+                            {inbound.length} in
+                          </span>
+                        </span>
+                      </CollapsibleTrigger>
+                      <CollapsibleContent>
+                        <div className="flex flex-col gap-3">
+                          <Section title="Symbols">
+                            {symbols.length === 0 ? (
+                              <p className="type-body-sm text-text-2">None</p>
+                            ) : (
+                              <ItemGroup variant="plain" aria-label="Symbols">
+                                {symbols.map((symbol) => (
+                                  <Item key={symbol.id} size="sm">
+                                    <Badge>{symbol.type}</Badge>
+                                    <ItemContent>
+                                      <ItemTitle>
+                                        <Truncate className="mono">
+                                          {symbol.label}
+                                        </Truncate>
+                                      </ItemTitle>
+                                    </ItemContent>
+                                    <ItemMeta>
+                                      L{symbol.lineStart}–{symbol.lineEnd}
+                                    </ItemMeta>
+                                    {symbol.isExported && (
+                                      <Badge variant="outline">exported</Badge>
+                                    )}
+                                  </Item>
+                                ))}
+                              </ItemGroup>
+                            )}
+                          </Section>
 
-                    <div>
-                      <div className="font-medium text-muted-foreground">
-                        Imports
-                      </div>
-                      <ImportList
-                        edges={outbound}
-                        nodeById={nodeById}
-                        direction="outbound"
-                      />
-                    </div>
+                          <Section title="Imports">
+                            <ImportList
+                              edges={outbound}
+                              nodeById={nodeById}
+                              direction="outbound"
+                              label="Imports"
+                            />
+                          </Section>
 
-                    <div>
-                      <div className="font-medium text-muted-foreground">
-                        Imported by
-                      </div>
-                      <ImportList
-                        edges={inbound}
-                        nodeById={nodeById}
-                        direction="inbound"
-                      />
-                    </div>
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      )}
-    </section>
+                          <Section title="Imported by">
+                            <ImportList
+                              edges={inbound}
+                              nodeById={nodeById}
+                              direction="inbound"
+                              label="Imported by"
+                            />
+                          </Section>
+                        </div>
+                      </CollapsibleContent>
+                    </Collapsible>
+                  );
+                })}
+              </CollapsibleGroup>
+            </div>
+          )}
+        </SkeletonSwap>
+      </CardContent>
+    </Card>
   );
 }

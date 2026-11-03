@@ -21,10 +21,13 @@ const EMPTY_CHAT = Object.freeze({
   draft: "",
 });
 
-export function useRepositoryChats(askRepository) {
+export function useRepositoryChats(askRepository, stopAsk) {
   const [chats, setChats] = useState({});
   // The latest ask function, so an in-flight question never calls a stale one.
   const askRef = useRef(askRepository);
+  const stopRef = useRef(stopAsk);
+  // The request id of each question in flight, so it can be stopped.
+  const requestIdsRef = useRef(new Map());
   // Repositories with a question in flight, checked synchronously so a fast
   // double submit cannot send the same question twice.
   const inFlightRef = useRef(new Set());
@@ -34,7 +37,8 @@ export function useRepositoryChats(askRepository) {
 
   useEffect(() => {
     askRef.current = askRepository;
-  }, [askRepository]);
+    stopRef.current = stopAsk;
+  }, [askRepository, stopAsk]);
 
   const update = useCallback((repositoryId, change, { create = true } = {}) => {
     setChats((current) => {
@@ -80,13 +84,16 @@ export function useRepositoryChats(askRepository) {
       };
 
       try {
-        reply = await askRef.current(repositoryId, trimmedQuestion, onText);
+        const requestId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+        requestIdsRef.current.set(repositoryId, requestId);
+        reply = await askRef.current(repositoryId, trimmedQuestion, onText, requestId);
       } catch (error) {
         reply =
           error?.message || "I could not answer that yet. Try another question.";
       }
 
       inFlightRef.current.delete(repositoryId);
+      requestIdsRef.current.delete(repositoryId);
 
       if (generation !== generationRef.current) return;
 
@@ -105,6 +112,13 @@ export function useRepositoryChats(askRepository) {
     [update],
   );
 
+  // Stops the answer being written; what already arrived stays in the thread.
+  const stop = useCallback((repositoryId) => {
+    const requestId = requestIdsRef.current.get(repositoryId);
+
+    if (requestId) stopRef.current?.(requestId);
+  }, []);
+
   const remove = useCallback((repositoryId) => {
     inFlightRef.current.delete(repositoryId);
     setChats((current) => {
@@ -122,5 +136,5 @@ export function useRepositoryChats(askRepository) {
     setChats({});
   }, []);
 
-  return { get, setDraft, ask, remove, reset };
+  return { get, setDraft, ask, stop, remove, reset };
 }

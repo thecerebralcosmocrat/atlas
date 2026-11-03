@@ -53,15 +53,18 @@ contextBridge.exposeInMainWorld("electronAPI", {
     discardChanges: (repositoryId) =>
       ipcRenderer.invoke("repositories:discard-changes", repositoryId),
     // `onText` receives the answer so far while the model is still writing it.
-    // The resolved value is always the full final answer.
-    ask: async (repositoryId, question, onText) => {
+    // The resolved value is always the full final answer. Pass a `requestId`
+    // to be able to stop the answer with `cancelAsk`; the text that already
+    // arrived is kept.
+    ask: async (repositoryId, question, onText, requestId) => {
       if (typeof onText !== "function") {
         return ipcRenderer.invoke("repositories:ask", { repositoryId, question });
       }
 
-      const requestId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      const id =
+        requestId ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`;
       const subscription = (event, value) => {
-        if (value?.requestId === requestId) onText(value.text);
+        if (value?.requestId === id) onText(value.text);
       };
 
       ipcRenderer.on("repositories:ask-text", subscription);
@@ -70,12 +73,14 @@ contextBridge.exposeInMainWorld("electronAPI", {
         return await ipcRenderer.invoke("repositories:ask", {
           repositoryId,
           question,
-          requestId,
+          requestId: id,
         });
       } finally {
         ipcRenderer.removeListener("repositories:ask-text", subscription);
       }
     },
+    cancelAsk: (requestId) =>
+      ipcRenderer.invoke("repositories:ask-cancel", requestId),
     onIndexProgress: (callback) => {
       const subscription = (event, value) => callback(value);
       ipcRenderer.on("index-progress", subscription);

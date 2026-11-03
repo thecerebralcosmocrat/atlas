@@ -1,7 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { ArrowUp } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { Icon, ArrowUp } from "@/components/glaze/icon";
+import { Alert, AlertTitle, AlertDescription } from "@/components/glaze/ui/alert";
+import { Input, InputAction } from "@/components/glaze/ui/input";
+import { LogViewer } from "@/components/glaze/ui/log-viewer";
+import { Progress, ProgressLabel, ProgressValue } from "@/components/glaze/ui/progress";
 
 export default function Onboarding({ onAddRepository }) {
   const navigate = useNavigate();
@@ -9,7 +12,6 @@ export default function Onboarding({ onAddRepository }) {
   const [isIndexing, setIsIndexing] = useState(false);
   const [logs, setLogs] = useState([]);
   const [error, setError] = useState("");
-  const logContainerRef = useRef(null);
   const [progress, setProgress] = useState(null);
   const [addProgress, setAddProgress] = useState(null);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
@@ -36,7 +38,7 @@ export default function Onboarding({ onAddRepository }) {
         `Indexed ${repository.fileCount} files in ${repository.directoryCount} folders.`,
         "Opening repository...",
       ]);
-      navigate("/repo?tab=overview");
+      navigate("/repo?tab=ask");
     } catch (err) {
       setError(err.message || "Could not add this repository.");
       setLogs((prev) => [
@@ -50,12 +52,6 @@ export default function Onboarding({ onAddRepository }) {
       setAddProgress(null);
     }
   };
-
-  useEffect(() => {
-    if (logContainerRef.current) {
-      logContainerRef.current.scrollTop = logContainerRef.current.scrollHeight;
-    }
-  }, [logs]);
 
   // A clone of a large repository can take over a minute. The seconds counter
   // is the difference between "working" and an app that looks frozen.
@@ -130,98 +126,72 @@ export default function Onboarding({ onAddRepository }) {
 
   return (
     <div className="min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden px-6 py-10">
-      <div className="mx-auto flex min-h-full w-full max-w-[720px] flex-col items-center justify-center">
+      <div className="mx-auto flex min-h-full w-full max-w-2xl flex-col items-center justify-center">
         <div className="mb-8 text-center">
-          <h1 className="mb-2 text-3xl font-semibold tracking-[-0.055em] text-foreground">
-            Index a repository
-          </h1>
-          <p className="text-sm text-muted-foreground">
+          <h1 className="type-title mb-2 text-text-1">Index a repository</h1>
+          <p className="type-body text-text-2">
             Paste a GitHub URL to get started
           </p>
         </div>
 
-        <div className="w-full">
-          <label htmlFor="repo-url" className="sr-only">
-            Repository URL
-          </label>
-          <div className="relative flex h-14 items-center rounded-none border border-border bg-background px-2 transition-[border-color,box-shadow] duration-150 ease-out focus-within:border-ring focus-within:ring-3 focus-within:ring-ring/50">
-            <input
-              id="repo-url"
-              type="text"
-              value={url}
-              onChange={(e) => setUrl(e.target.value)}
-              disabled={isIndexing}
-              placeholder="https://github.com/user/repo"
-              className="h-full flex-1 border-none bg-transparent px-3 text-[15px] text-foreground outline-none placeholder:text-muted-foreground"
-              onKeyDown={(e) => {
-                if (e.key === "Enter") handleIndex();
-              }}
-              autoFocus
-            />
-            <Button
-              type="button"
-              variant="default"
-              size="icon"
-              className="rounded-none"
-              onClick={handleIndex}
-              disabled={isIndexing || !url.trim()}
-              aria-label="Index repository"
-            >
-              <ArrowUp className="h-4 w-4" />
-            </Button>
-          </div>
+        <div className="flex w-full flex-col gap-4">
+          <Input
+            id="repo-url"
+            size="lg"
+            aria-label="Repository URL"
+            type="text"
+            value={url}
+            onChange={(e) => setUrl(e.target.value)}
+            disabled={isIndexing}
+            placeholder="https://github.com/user/repo"
+            onKeyDown={(e) => {
+              if (e.key === "Enter") handleIndex();
+            }}
+            autoFocus
+            trailing={
+              <InputAction
+                variant="primary"
+                aria-label="Index repository"
+                onClick={handleIndex}
+                disabled={isIndexing || !url.trim()}
+              >
+                <Icon icon={ArrowUp} />
+              </InputAction>
+            }
+          />
 
           {isIndexing && (
-            <div
-              ref={logContainerRef}
-              className="mt-4 h-40 overflow-y-auto border border-border p-4"
-            >
-              {logs.map((log, index) => (
-                <div
-                  key={index}
-                  className="mb-1.5 flex animate-in items-start gap-2 text-sm text-muted-foreground fade-in-0 slide-in-from-bottom-1 duration-200"
-                  style={{ animationDelay: `${Math.min(index * 40, 160)}ms` }}
-                >
-                  <span className="leading-snug text-foreground">•</span>
-                  <span className="leading-snug">{log}</span>
-                </div>
-              ))}
-            </div>
+            <LogViewer
+              label="Indexing log"
+              lines={logs.map((message, index) => ({
+                id: index,
+                level: "info",
+                message,
+              }))}
+              streaming={isIndexing}
+              timestamps={false}
+              height={160}
+            />
           )}
 
           {showProgress && (
-            <div className="mt-4 border border-border p-4">
-              <div className="flex justify-between items-center mb-2 text-sm text-muted-foreground">
-                <span className="truncate">{progressLabel}</span>
-                <span className="font-medium shrink-0 ms-4 tabular-nums">
-                  {progressDetail}
-                </span>
-              </div>
-              <div className="w-full bg-secondary h-2 rounded-none overflow-hidden">
-                <div
-                  className={
-                    progressPercent === null
-                      ? "bg-primary h-full rounded-none animate-pulse"
-                      : "bg-primary h-full rounded-none transition-all duration-300 ease-out"
-                  }
-                  style={{
-                    width:
-                      progressPercent === null
-                        ? "100%"
-                        : `${Math.min(100, Math.max(0, progressPercent))}%`,
-                  }}
-                />
-              </div>
-            </div>
+            <Progress
+              value={
+                progressPercent === null
+                  ? null
+                  : Math.min(100, Math.max(0, progressPercent))
+              }
+            >
+              <ProgressLabel>{progressLabel}</ProgressLabel>
+              <ProgressValue>{() => progressDetail}</ProgressValue>
+            </Progress>
           )}
 
           {error && (
-            <div
-              role="alert"
-              className="mt-4 border border-destructive/30 bg-destructive/10 p-4 text-sm text-destructive"
-            >
-              {error}
-            </div>
+            <Alert status="fail">
+              <AlertTitle>Could not add this repository</AlertTitle>
+              <AlertDescription>{error}</AlertDescription>
+            </Alert>
           )}
         </div>
       </div>

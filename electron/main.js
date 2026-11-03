@@ -831,7 +831,12 @@ async function* readEventStream(body) {
 // The timeout resets on every event, so a long answer that keeps arriving is
 // not cut off, but a stalled one is. If the stream breaks after some text
 // arrived, that text is kept with a note instead of being thrown away.
-async function answerWithNim(repositoryContext, question, onText = () => {}) {
+async function answerWithNim(
+  repositoryContext,
+  question,
+  onText = () => {},
+  signal = null,
+) {
   const {
     apiKey,
     chatApiUrl: apiUrl,
@@ -849,6 +854,10 @@ async function answerWithNim(repositoryContext, question, onText = () => {}) {
     timeout = setTimeout(() => controller.abort(), CHAT_TIMEOUT_MS);
   };
   let text = "";
+  // A stop from the user aborts the same controller the timeout uses.
+  const onStop = () => controller.abort();
+  signal?.addEventListener("abort", onStop);
+  if (signal?.aborted) controller.abort();
 
   try {
     const response = await fetch(apiUrl, {
@@ -897,6 +906,10 @@ async function answerWithNim(repositoryContext, question, onText = () => {}) {
 
     return text.trim() || null;
   } catch (error) {
+    if (signal?.aborted) {
+      return text.trim() ? `${text.trim()}\n\n_Stopped._` : "Stopped.";
+    }
+
     if (!text.trim()) throw error;
 
     console.error("The answer stream broke partway:", error);
@@ -906,6 +919,7 @@ async function answerWithNim(repositoryContext, question, onText = () => {}) {
     return `${text.trim()}\n\n_The answer was cut off because ${reason}._`;
   } finally {
     clearTimeout(timeout);
+    signal?.removeEventListener("abort", onStop);
   }
 }
 
@@ -1405,6 +1419,13 @@ function registerIpcHandlers() {
     },
   );
 
+  // Questions in flight, so the renderer can stop one by its requestId.
+  const askControllers = new Map();
+
+  ipcMain.handle("repositories:ask-cancel", (_, requestId) => {
+    askControllers.get(requestId)?.abort();
+  });
+
   ipcMain.handle("repositories:ask", async (event, { repositoryId, question, requestId }) => {
     if (!question || typeof question !== "string") {
       throw new Error("Ask a question about this repository.");
@@ -1485,11 +1506,20 @@ function registerIpcHandlers() {
             }
           }
         : undefined;
-      const nimAnswer = await answerWithNim(
-        buildRepositoryContext(answerContext),
-        trimmedQuestion,
-        sendText,
-      );
+      const controller = new AbortController();
+      if (requestId) askControllers.set(requestId, controller);
+
+      let nimAnswer;
+      try {
+        nimAnswer = await answerWithNim(
+          buildRepositoryContext(answerContext),
+          trimmedQuestion,
+          sendText,
+          controller.signal,
+        );
+      } finally {
+        if (requestId) askControllers.delete(requestId);
+      }
 
       if (nimAnswer) return nimAnswer;
     } catch (error) {
