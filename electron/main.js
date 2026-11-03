@@ -568,8 +568,11 @@ const CHAT_TIMEOUT_MS = 60 * 1000;
 const CLONE_URL_SCHEME = /^[a-z][a-z0-9+.-]*:\/\//i;
 const CLONE_SCP_LIKE = /^[^\s/@]+@[^\s/:]+:[^\s]+$/;
 const WINDOWS_ABSOLUTE_PATH = /^[a-z]:[\\/]/i;
+// `owner/repo` or `github.com/owner/repo`, typed without a scheme.
+const GITHUB_SHORTHAND =
+  /^(?:(?:www\.)?github\.com\/)?([a-z0-9](?:[a-z0-9-]*[a-z0-9])?)\/([a-z0-9._-]+?)(?:\.git)?\/?$/i;
 const INVALID_URL_MESSAGE =
-  "Enter a valid repository URL (for example https://github.com/owner/repo.git).";
+  "Enter a valid repository URL (for example owner/repo or https://github.com/owner/repo.git).";
 
 // Rejects obviously unusable input with an actionable message before we spawn
 // git, so the user sees why the add failed instead of a raw clone error.
@@ -595,6 +598,10 @@ function validateRepositoryUrl(repositoryUrl) {
     trimmedUrl.startsWith("~");
 
   if (!looksLikePath) {
+    const shorthand = GITHUB_SHORTHAND.exec(trimmedUrl);
+    if (shorthand && shorthand[2] !== "." && shorthand[2] !== "..") {
+      return `https://github.com/${shorthand[1]}/${shorthand[2]}.git`;
+    }
     throw new Error(INVALID_URL_MESSAGE);
   }
 
