@@ -35,6 +35,7 @@ const ENTRY_BASENAME_ORDER = [
   "__main__.py",
   "main.py",
   "app.py",
+  "Program.cs",
 ];
 
 const ENTRY_BASENAME_RANK = new Map(
@@ -52,6 +53,36 @@ function hasCMainFunction(content) {
   return C_MAIN_DEFINITION.test(String(content ?? ""));
 }
 
+// C# starts at a static `Main`, or in `Program.cs` with top-level statements.
+// A Unity project has no `Main`: the engine instantiates MonoBehaviour scripts
+// from scenes and calls their lifecycle methods, so a script that derives from
+// MonoBehaviour and defines one of those methods is where its code starts
+// running. Editor-only scripts (under an `Editor` folder) never ship in a build.
+const CSHARP_SOURCE_EXTENSION = /\.cs$/i;
+const CSHARP_MAIN_DEFINITION =
+  /\bstatic\s+(?:async\s+)?(?:void|int|Task(?:<int>)?)\s+Main\s*\(/;
+const UNITY_BEHAVIOUR_CLASS =
+  /\bclass\s+\w+\s*(?:<[^>{]*>)?\s*:\s*[^{;]*\b(?:MonoBehaviour|NetworkBehaviour)\b/;
+const UNITY_LIFECYCLE_METHOD =
+  /\b(?:void|IEnumerator)\s+(?:Awake|OnEnable|Start|Update)\s*\(/;
+const UNITY_EDITOR_DIRECTORY = /(^|\/)Editor\//;
+
+// Returns "main", "unity", or null for a C# file's content. Comments are
+// dropped first so a commented-out `Main` does not count.
+function csharpEntryKind(content) {
+  const code = String(content ?? "")
+    .replace(/\/\*[\s\S]*?\*\//g, " ")
+    .replace(/\/\/.*$/gm, "");
+
+  if (CSHARP_MAIN_DEFINITION.test(code)) return "main";
+
+  if (UNITY_BEHAVIOUR_CLASS.test(code) && UNITY_LIFECYCLE_METHOD.test(code)) {
+    return "unity";
+  }
+
+  return null;
+}
+
 const DEFAULT_MAX_ENTRIES = 6;
 const DEFAULT_LIMIT = 12;
 
@@ -60,7 +91,9 @@ const DEFAULT_LIMIT = 12;
 // Also directories named like `unit_tests` or `umd-test`, which C/C++ projects
 // use for their test runners (each with its own main()).
 const TEST_DIRECTORY =
-  /(^|\/)(__tests__|tests?|specs?|[^/]*[-_]tests?)\//;
+  /(^|\/)(__tests__|tests?|specs?|[^/]*[-_]tests?)\//i;
+// C# test classes are named `FooTests.cs` / `FooTest.cs`.
+const CSHARP_TEST_FILENAME = /[A-Za-z0-9]Tests?\.cs$/;
 const TEST_FILENAME = /(^|[.\-_])(test|spec)\.[a-z]+$/i;
 const PYTHON_TEST_FILENAME = /(^|\/)test_[^/]*\.py$/i;
 
@@ -70,7 +103,8 @@ function isTestPath(filePath) {
   return (
     TEST_DIRECTORY.test(posixPath) ||
     TEST_FILENAME.test(posixPath) ||
-    PYTHON_TEST_FILENAME.test(posixPath)
+    PYTHON_TEST_FILENAME.test(posixPath) ||
+    CSHARP_TEST_FILENAME.test(posixPath)
   );
 }
 
@@ -127,6 +161,7 @@ function entryReason(filePath) {
 
   if (name.startsWith("index.")) return "index file";
   if (name === "__main__.py") return "Python __main__ module";
+  if (name === "Program.cs") return "C# Program.cs";
   if (name.endsWith(".py")) return "Python entry module";
   return "entry module";
 }
@@ -139,6 +174,7 @@ function detectEntryPoints({
   const fileIdByPath = new Map();
   const guardByPath = new Map();
   const cMainByPath = new Map();
+  const csharpKindByPath = new Map();
 
   for (const file of files) {
     if (!file || file.path === undefined || file.path === null) continue;
@@ -149,6 +185,7 @@ function detectEntryPoints({
       fileIdByPath.set(posixPath, file.id ?? null);
       guardByPath.set(posixPath, Boolean(file.hasMainGuard));
       cMainByPath.set(posixPath, Boolean(file.hasCMain));
+      csharpKindByPath.set(posixPath, file.csharpEntry ?? null);
     }
   }
 
@@ -226,6 +263,33 @@ function detectEntryPoints({
 
   for (const candidate of cMainMatches) {
     add(candidate, "C/C++ main()");
+  }
+
+  // A C# `Main` method, then Unity scripts that the engine runs from a scene.
+  // Test and editor-only files are left out for the same reason as C tests.
+  const csharpMatches = [...fileIdByPath.keys()]
+    .filter(
+      (candidate) =>
+        csharpKindByPath.get(candidate) &&
+        CSHARP_SOURCE_EXTENSION.test(candidate) &&
+        !isTestPath(candidate) &&
+        !UNITY_EDITOR_DIRECTORY.test(candidate),
+    )
+    .sort(
+      (left, right) =>
+        (csharpKindByPath.get(left) === "main" ? 0 : 1) -
+          (csharpKindByPath.get(right) === "main" ? 0 : 1) ||
+        depth(left) - depth(right) ||
+        left.localeCompare(right),
+    );
+
+  for (const candidate of csharpMatches) {
+    add(
+      candidate,
+      csharpKindByPath.get(candidate) === "main"
+        ? "C# Main()"
+        : "Unity MonoBehaviour",
+    );
   }
 
   return found.slice(0, Math.max(0, maxEntries));
@@ -326,6 +390,47 @@ function readPackageJson(rootPath) {
   }
 }
 
+// Entry points that only show up in a file's content: C/C++ `main()` and C#
+// `Main` / Unity scripts. Only candidate files mentioning the marker word have
+// their content read, so a large repository does not load every file just to
+// look for entries. Sets `hasCMain` and `csharpEntry` on each row.
+function markContentEntries(db, repoId, files) {
+  const cMainIds = new Set(
+    db
+      .prepare(
+        `SELECT id, raw_content FROM files
+          WHERE repo_id = ?
+            AND instr(raw_content, 'main') > 0
+            AND (lower(path) LIKE '%.c' OR lower(path) LIKE '%.cc'
+                 OR lower(path) LIKE '%.cpp' OR lower(path) LIKE '%.cxx')`,
+      )
+      .all(repoId)
+      .filter((row) => hasCMainFunction(row.raw_content))
+      .map((row) => row.id),
+  );
+  const csharpKindById = new Map(
+    db
+      .prepare(
+        `SELECT id, raw_content FROM files
+          WHERE repo_id = ?
+            AND lower(path) LIKE '%.cs'
+            AND (instr(raw_content, 'Main') > 0
+                 OR instr(raw_content, 'MonoBehaviour') > 0
+                 OR instr(raw_content, 'NetworkBehaviour') > 0)`,
+      )
+      .all(repoId)
+      .map((row) => [row.id, csharpEntryKind(row.raw_content)])
+      .filter(([, kind]) => kind !== null),
+  );
+
+  for (const file of files) {
+    file.hasCMain = cMainIds.has(file.id);
+    file.csharpEntry = csharpKindById.get(file.id) ?? null;
+  }
+
+  return files;
+}
+
 function getStartHere(repositoryId) {
   const repoId = findRepoPrimaryKey(repositoryId);
 
@@ -343,25 +448,7 @@ function getStartHere(repositoryId) {
     .prepare("SELECT root_path FROM repos WHERE id = ?")
     .get(repoId);
 
-  // Only C/C++ translation units that mention `main` have their content read,
-  // so a large repository does not load every file just to look for entries.
-  const cMainIds = new Set(
-    db
-      .prepare(
-        `SELECT id, raw_content FROM files
-          WHERE repo_id = ?
-            AND instr(raw_content, 'main') > 0
-            AND (lower(path) LIKE '%.c' OR lower(path) LIKE '%.cc'
-                 OR lower(path) LIKE '%.cpp' OR lower(path) LIKE '%.cxx')`,
-      )
-      .all(repoId)
-      .filter((row) => hasCMainFunction(row.raw_content))
-      .map((row) => row.id),
-  );
-
-  for (const file of files) {
-    file.hasCMain = cMainIds.has(file.id);
-  }
+  markContentEntries(db, repoId, files);
 
   return buildStartHere({
     graph: getRepositoryGraph(repositoryId),
@@ -374,7 +461,9 @@ module.exports = {
   buildStartHere,
   detectEntryPoints,
   getStartHere,
+  csharpEntryKind,
   hasCMainFunction,
   isTestPath,
+  markContentEntries,
   readPackageJson,
 };

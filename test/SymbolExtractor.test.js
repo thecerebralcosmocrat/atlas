@@ -382,3 +382,53 @@ test("normalizes a language name before dispatch", () => {
   assert.strictEqual(normalizeLanguage(".JS"), "js");
   assert.strictEqual(normalizeLanguage(""), "");
 });
+
+test("extracts C# types, methods, and using directives", () => {
+  const { symbols, imports } = extract("cs", [
+    "using System;",
+    "using static UnityEngine.Mathf;",
+    "global using Foo = Some.Bar;",
+    "namespace Demo",
+    "{",
+    "    // class Fake {}",
+    "    public class Tracker : MonoBehaviour",
+    "    {",
+    "        [SerializeField] private float speed = 1f;",
+    "        public Tracker() {}",
+    "        void Awake()",
+    "        {",
+    "            using (var s = new Stream()) { }",
+    "            return Compute(1);",
+    "        }",
+    "        public int Twice(int a) => a * 2;",
+    "        public abstract void Run();",
+    "    }",
+    "    internal struct Pose { }",
+    "}",
+  ]);
+
+  assert.deepStrictEqual(
+    symbols.map((symbol) => [symbol.name, symbol.kind, symbol.isExported]),
+    [
+      ["Demo", "namespace", true],
+      ["Tracker", "class", true],
+      ["Awake", "function", false],
+      ["Twice", "function", true],
+      ["Run", "function", true],
+      ["Pose", "struct", false],
+    ],
+  );
+  assert.deepStrictEqual(
+    symbols.slice(0, 3).map((symbol) => [symbol.lineStart, symbol.lineEnd]),
+    [
+      [4, 20],
+      [7, 18],
+      [11, 15],
+    ],
+  );
+  assert.deepStrictEqual(imports, [
+    { specifier: "System", type: "using" },
+    { specifier: "UnityEngine.Mathf", type: "using-static" },
+    { specifier: "Some.Bar", type: "using" },
+  ]);
+});

@@ -8,6 +8,7 @@
 
 const JAVASCRIPT_LANGUAGES = ["js", "jsx", "ts", "tsx", "mjs", "cjs"];
 const PYTHON_LANGUAGES = ["py"];
+const CSHARP_LANGUAGES = ["cs"];
 // C and C++ share one extractor. Header extensions are included so a
 // repository's public API shows up in the graph even with no .c/.cpp file.
 const C_LANGUAGES = [
@@ -34,6 +35,9 @@ for (const language of PYTHON_LANGUAGES) {
 }
 for (const language of C_LANGUAGES) {
   LANGUAGE_GROUPS.set(language, "c");
+}
+for (const language of CSHARP_LANGUAGES) {
+  LANGUAGE_GROUPS.set(language, "csharp");
 }
 
 const MAX_SIGNATURE_LENGTH = 200;
@@ -886,6 +890,121 @@ function extractCImports(sourceText) {
   return dedupeImports(imports);
 }
 
+// C# (including Unity scripts). Like the other extractors this is line-oriented:
+// it reads type, namespace and method declarations and `using` directives, and
+// leaves properties, fields and constructors out.
+const CSHARP_MODIFIER =
+  "(?:public|private|protected|internal|static|virtual|override|abstract|sealed|async|extern|unsafe|new|partial|readonly|file)";
+const CSHARP_ATTRIBUTES = "(?:\\[[^\\]]*\\]\\s*)*";
+const CSHARP_TYPE_DECLARATION = new RegExp(
+  `^\\s*${CSHARP_ATTRIBUTES}((?:${CSHARP_MODIFIER}\\s+)*)(class|struct|interface|enum|record(?:\\s+(?:class|struct))?)\\s+([A-Za-z_]\\w*)`,
+);
+const CSHARP_NAMESPACE_DECLARATION =
+  /^\s*namespace\s+([A-Za-z_][\w.]*)\s*(?:;|\{|$)/;
+const CSHARP_METHOD_DECLARATION = new RegExp(
+  `^\\s*${CSHARP_ATTRIBUTES}((?:${CSHARP_MODIFIER}\\s+)*)([\\w.]+(?:<[^()]*?>)?(?:\\[[\\s,]*\\])*\\??)\\s+([A-Za-z_]\\w*)\\s*(?:<[^()]*?>)?\\s*\\(`,
+);
+// Words that can precede `Name(` in a statement without being a return type.
+const CSHARP_NOT_A_TYPE = new Set([
+  "public", "private", "protected", "internal", "static", "virtual", "override",
+  "abstract", "sealed", "async", "extern", "unsafe", "new", "partial", "readonly",
+  "file", "return", "await", "yield", "throw", "else", "case", "goto", "using",
+  "lock", "if", "for", "foreach", "while", "switch", "catch", "typeof", "sizeof",
+  "nameof", "default", "base", "this", "out", "ref", "in", "is", "as", "do",
+  "try", "finally", "fixed", "checked", "unchecked", "delegate", "event",
+  "operator", "implicit", "explicit", "namespace",
+]);
+
+function extractCSharpSymbols(lines) {
+  const code = stripCCommentsAndStrings(lines);
+  const symbols = [];
+
+  for (let index = 0; index < code.length; index += 1) {
+    const line = code[index];
+
+    if (!line.trim()) continue;
+
+    const namespaceMatch = CSHARP_NAMESPACE_DECLARATION.exec(line);
+
+    if (namespaceMatch) {
+      const hasBlock = line.includes("{") || /^\s*\{/.test(code[index + 1] ?? "");
+
+      symbols.push({
+        name: namespaceMatch[1],
+        kind: "namespace",
+        signature: truncateSignature(lines[index]),
+        lineStart: index + 1,
+        // A file-scoped namespace (`namespace X;`) covers the rest of the file.
+        lineEnd: hasBlock ? findCBlockEnd(code, index) + 1 : code.length,
+        isExported: true,
+      });
+      continue;
+    }
+
+    const typeMatch = CSHARP_TYPE_DECLARATION.exec(line);
+
+    if (typeMatch) {
+      const keyword = typeMatch[2].split(/\s+/)[0];
+      const kind = keyword === "record" ? "class" : keyword;
+
+      symbols.push({
+        name: typeMatch[3],
+        kind,
+        signature: truncateSignature(lines[index]),
+        lineStart: index + 1,
+        lineEnd: findCBlockEnd(code, index) + 1,
+        isExported: /\bpublic\b/.test(typeMatch[1]),
+      });
+      continue;
+    }
+
+    if (!line.includes("(")) continue;
+
+    const methodMatch = CSHARP_METHOD_DECLARATION.exec(line);
+
+    if (!methodMatch || CSHARP_NOT_A_TYPE.has(methodMatch[2])) continue;
+
+    // An abstract or interface member ends in `;` and an expression-bodied one
+    // uses `=>`: neither has a brace block to find.
+    const hasBody = /\{/.test(line) || /^\s*\{/.test(code[index + 1] ?? "");
+    const endsHere = !hasBody && (/;\s*$/.test(line) || /=>/.test(line));
+
+    symbols.push({
+      name: methodMatch[3],
+      kind: "function",
+      signature: truncateSignature(lines[index]),
+      lineStart: index + 1,
+      lineEnd: endsHere ? index + 1 : findCBlockEnd(code, index) + 1,
+      isExported: /\b(?:public|protected|internal)\b/.test(methodMatch[1]),
+    });
+  }
+
+  return symbols;
+}
+
+// `using System;`, `using static X.Y;`, `global using X;`, and aliases
+// (`using Foo = X.Bar;`). `using (...)` and `using var x = ...` are statements,
+// not directives, and do not match.
+function extractCSharpImports(sourceText) {
+  const imports = [];
+
+  for (const line of splitLines(sourceText)) {
+    const match =
+      /^\s*(?:global\s+)?using\s+(static\s+)?(?:[A-Za-z_]\w*\s*=\s*)?([A-Za-z_][\w.]*)\s*;/.exec(
+        line,
+      );
+
+    if (match) {
+      imports.push({
+        specifier: match[2],
+        type: match[1] ? "using-static" : "using",
+      });
+    }
+  }
+
+  return dedupeImports(imports);
+}
+
 const EXTRACTORS = {
   javascript: {
     extractSymbols: extractJavaScriptSymbols,
@@ -898,6 +1017,10 @@ const EXTRACTORS = {
   c: {
     extractSymbols: extractCSymbols,
     extractImports: extractCImports,
+  },
+  csharp: {
+    extractSymbols: extractCSharpSymbols,
+    extractImports: extractCSharpImports,
   },
 };
 

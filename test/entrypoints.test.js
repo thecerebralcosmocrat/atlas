@@ -8,6 +8,7 @@ const { IndexerService } = require("../electron/indexer/IndexerService");
 const { buildGraph } = require("../electron/query/graph");
 const {
   buildStartHere,
+  csharpEntryKind,
   detectEntryPoints,
   getStartHere,
   hasCMainFunction,
@@ -355,5 +356,76 @@ test("detects a C/C++ main() end to end", async () => {
   assert.deepStrictEqual(
     entries.map((entry) => [entry.path, entry.reason]),
     [["tools/cli/src/main.cpp", "C/C++ main()"]],
+  );
+});
+
+test("classifies a C# Main and Unity MonoBehaviour scripts", () => {
+  assert.strictEqual(
+    csharpEntryKind("class P {\n  static void Main(string[] args) {}\n}"),
+    "main",
+  );
+  assert.strictEqual(
+    csharpEntryKind("static async Task<int> Main(string[] a) { return 0; }"),
+    "main",
+  );
+  assert.strictEqual(
+    csharpEntryKind(
+      "public class Tracker : MonoBehaviour {\n  void Start() {}\n}",
+    ),
+    "unity",
+  );
+  // A MonoBehaviour with no lifecycle method, a plain class, and commented
+  // code are not entries.
+  assert.strictEqual(
+    csharpEntryKind("class A : MonoBehaviour { public void Go() {} }"),
+    null,
+  );
+  assert.strictEqual(
+    csharpEntryKind("class A { void Start() {} }"),
+    null,
+  );
+  assert.strictEqual(
+    csharpEntryKind("// static void Main(string[] a) {}\nclass A {}"),
+    null,
+  );
+});
+
+test("detects C# and Unity entries and leaves out Editor scripts and tests", () => {
+  const files = [
+    { id: 1, path: "Assets/Scripts/Tracker.cs", csharpEntry: "unity" },
+    { id: 2, path: "Assets/Editor/Inspector.cs", csharpEntry: "unity" },
+    { id: 3, path: "Assets/Tests/TrackerTests.cs", csharpEntry: "unity" },
+    { id: 4, path: "tools/Cli/Runner.cs", csharpEntry: "main" },
+    { id: 5, path: "Assets/Scripts/Util.cs", csharpEntry: null },
+  ];
+
+  assert.deepStrictEqual(
+    detectEntryPoints({ files }).map((entry) => [entry.path, entry.reason]),
+    [
+      ["tools/Cli/Runner.cs", "C# Main()"],
+      ["Assets/Scripts/Tracker.cs", "Unity MonoBehaviour"],
+    ],
+  );
+});
+
+test("detects Unity entries end to end", async () => {
+  freshDb();
+  const repo = makeFixtureRepo({
+    "Assets/Scripts/MarkerTracker.cs":
+      "using UnityEngine;\npublic class MarkerTracker : MonoBehaviour\n{\n  void Update() {}\n}\n",
+    "Assets/Scripts/Helpers.cs":
+      "public static class Helpers\n{\n  public static int Twice(int a) => a * 2;\n}\n",
+    "Assets/Editor/Menu.cs":
+      "using UnityEditor;\npublic class Menu : MonoBehaviour { void Start() {} }\n",
+  });
+
+  const { repoId } = await new IndexerService().indexRepo(repo, {
+    webContents: { send() {} },
+  });
+  const { entries } = getStartHere(repoId);
+
+  assert.deepStrictEqual(
+    entries.map((entry) => [entry.path, entry.reason]),
+    [["Assets/Scripts/MarkerTracker.cs", "Unity MonoBehaviour"]],
   );
 });

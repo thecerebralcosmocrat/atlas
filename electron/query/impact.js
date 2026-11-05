@@ -14,6 +14,7 @@ const { findRepoPrimaryKey, getRepositoryGraph } = require("./graph");
 const {
   detectEntryPoints,
   isTestPath,
+  markContentEntries,
   readPackageJson,
 } = require("./entrypoints");
 
@@ -534,6 +535,10 @@ function getRootPath(repoId) {
 }
 
 function resolveEntryPaths(repoId, fileRows) {
+  // Same content-based entries start-here uses, so "unreachable" and "start
+  // here" agree on what counts as an entry point.
+  markContentEntries(getDb(), repoId, fileRows);
+
   return detectEntryPoints({
     files: fileRows,
     packageJson: readPackageJson(getRootPath(repoId)),
